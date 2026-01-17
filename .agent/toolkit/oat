@@ -1,0 +1,5 @@
+#!/bin/bash
+# Shell wrapper for oat CLI
+# This script calls the Python oat module
+
+python3 -m oat.cli "$@"
