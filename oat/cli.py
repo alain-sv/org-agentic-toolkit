@@ -7,7 +7,12 @@ from pathlib import Path
 import click
 
 from oat import __version__
-from oat.discovery import find_repo_root, find_org_root, find_personal_overlay
+from oat.discovery import (
+    find_repo_root,
+    find_org_root,
+    find_org_root_by_walking,
+    find_personal_overlay,
+)
 from oat.config import (
     load_inherits_yaml,
     load_memory_manifest,
@@ -87,6 +92,7 @@ def cli(ctx, output_json, quiet):
     help="Exclude a persona from manifest",
 )
 @click.option("--repo", type=click.Path(exists=True), help="Explicit repo root path")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def compile(
     ctx,
@@ -103,6 +109,7 @@ def compile(
     include_personas,
     exclude_personas,
     repo,
+    force,
 ):
     """Compile agent instructions from org rules, project rules, and personal overlay."""
     try:
@@ -142,6 +149,81 @@ def compile(
             include_hash=include_hash,
         )
 
+        # Determine output path for summary
+        summary_output_path = None
+        summary_target = target
+        if target:
+            # Load targets.yaml from templates for summary
+            import importlib.resources
+            import yaml as yaml_module
+
+            template_targets = {}
+            try:
+                targets_path = importlib.resources.files("oat.templates").joinpath(
+                    "toolkit/targets.yaml"
+                )
+                targets_content = targets_path.read_text(encoding="utf-8")
+                targets_config = yaml_module.safe_load(targets_content)
+                template_targets = (
+                    targets_config.get("targets", {})
+                    if isinstance(targets_config, dict)
+                    else {}
+                )
+            except Exception:
+                pass
+
+            # Fallback to org root
+            if not template_targets:
+                template_targets = load_targets_yaml(
+                    org_root / ".agent" / "toolkit" / "targets.yaml"
+                )
+
+            if target in template_targets:
+                summary_output_path = repo_root / template_targets[target]
+        elif output_path:
+            summary_output_path = Path(output_path)
+        else:
+            summary_output_path = repo_root / "AGENTS.compiled.md"
+
+        # Generate and show compilation summary
+        summary = _generate_compile_summary(
+            repo_root,
+            org_root,
+            personal_overlay,
+            inherits_config,
+            options,
+            summary_output_path,
+            summary_target,
+        )
+
+        if not ctx.obj["quiet"]:
+            click.echo("\n" + "=" * 70)
+            click.echo("Compilation Summary")
+            click.echo("=" * 70)
+            click.echo(summary)
+            click.echo("=" * 70)
+
+        # Check for missing files
+        missing_files = []
+        for line in summary.split("\n"):
+            if "❌ MISSING" in line:
+                missing_files.append(line.strip())
+
+        if missing_files:
+            _error(
+                f"\nFound {len(missing_files)} missing file(s). Please fix these issues before compiling.",
+                ctx,
+            )
+            if not force:
+                click.echo("\nUse --force to attempt compilation anyway (will fail).")
+                sys.exit(1)
+
+        # Ask for confirmation unless --force is used
+        if not force and not ctx.obj["quiet"] and sys.stdin.isatty():
+            if not click.confirm("\nProceed with compilation?", default=True):
+                click.echo("Compilation cancelled.")
+                sys.exit(0)
+
         # Compile
         try:
             compiled, metadata = compile_document(
@@ -153,16 +235,38 @@ def compile(
 
         # Determine output path
         if target:
-            targets = load_targets_yaml(
-                org_root / ".agent" / "toolkit" / "targets.yaml"
-            )
-            if target not in targets:
+            # Load targets.yaml from templates (fallback to org root if not found)
+            import importlib.resources
+            import yaml as yaml_module
+
+            template_targets = {}
+            try:
+                targets_path = importlib.resources.files("oat.templates").joinpath(
+                    "toolkit/targets.yaml"
+                )
+                targets_content = targets_path.read_text(encoding="utf-8")
+                targets_config = yaml_module.safe_load(targets_content)
+                template_targets = (
+                    targets_config.get("targets", {})
+                    if isinstance(targets_config, dict)
+                    else {}
+                )
+            except Exception:
+                pass
+
+            # Fallback to org root targets.yaml if template not available
+            if not template_targets:
+                template_targets = load_targets_yaml(
+                    org_root / ".agent" / "toolkit" / "targets.yaml"
+                )
+
+            if target not in template_targets:
                 _error(
-                    f"Unknown target: {target}. Available: {', '.join(targets.keys())}",
+                    f"Unknown target: {target}. Available: {', '.join(template_targets.keys())}",
                     ctx,
                 )
                 sys.exit(1)
-            output_path = repo_root / targets[target]
+            output_path = repo_root / template_targets[target]
         elif not output_path:
             output_path = repo_root / "AGENTS.compiled.md"
         else:
@@ -173,6 +277,11 @@ def compile(
             if output_path.exists():
                 with open(output_path, "r", encoding="utf-8") as f:
                     old_content = f.read()
+                # Remove critical notice for comparison
+                if old_content.startswith("> CRITICAL: Read AGENTS.md first.\n\n"):
+                    old_content = old_content[
+                        len("> CRITICAL: Read AGENTS.md first.\n\n") :
+                    ]
                 # Simple diff - just show if different
                 if old_content != compiled:
                     if not ctx.obj["quiet"]:
@@ -194,10 +303,62 @@ def compile(
             click.echo(compiled)
         else:
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            # Write with critical notice
+            critical_notice = "> CRITICAL: Read AGENTS.md first.\n\n"
             with open(output_path, "w", encoding="utf-8") as f:
-                f.write(compiled)
+                f.write(critical_notice + compiled)
             if not ctx.obj["quiet"]:
                 click.echo(f"Compiled to: {output_path}")
+
+        # Create target agent files based on target_agents in inherits.yaml
+        # Only create if not using --target (which already writes to a specific file)
+        # and not using --print (which just prints to stdout)
+        if not print_output and not target:
+            target_agents = get_target_agents_from_config(inherits_config)
+            if target_agents:
+                # Load targets.yaml from templates
+                import importlib.resources
+                import yaml as yaml_module
+
+                try:
+                    targets_path = importlib.resources.files("oat.templates").joinpath(
+                        "toolkit/targets.yaml"
+                    )
+                    targets_content = targets_path.read_text(encoding="utf-8")
+                    targets_config = yaml_module.safe_load(targets_content)
+                    template_targets = (
+                        targets_config.get("targets", {})
+                        if isinstance(targets_config, dict)
+                        else {}
+                    )
+
+                    created_targets = []
+                    for agent_name in target_agents:
+                        if agent_name in template_targets:
+                            target_file_path = repo_root / template_targets[agent_name]
+                            # Create parent directories if needed (e.g., .github/, .qoder/)
+                            target_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+                            # Write file with critical notice
+                            critical_notice = "> CRITICAL: Read AGENTS.md first.\n\n"
+                            with open(target_file_path, "w", encoding="utf-8") as f:
+                                f.write(critical_notice + compiled)
+
+                            created_targets.append(target_file_path)
+                            if not ctx.obj["quiet"]:
+                                click.echo(f"Created target file: {target_file_path}")
+
+                    if created_targets and not ctx.obj["quiet"]:
+                        click.echo(
+                            f"\nCreated {len(created_targets)} target agent file(s)"
+                        )
+
+                except Exception as e:
+                    if not ctx.obj["quiet"]:
+                        click.echo(
+                            f"Warning: Could not create target agent files: {e}",
+                            err=True,
+                        )
 
         # Watch mode (basic implementation)
         if watch:
@@ -480,15 +641,8 @@ def init_project(ctx, org_root, force, suggest):
         if org_root:
             org_root_path = Path(org_root).resolve()
         else:
-            # Try to find org root by walking up
-            current = repo_root.parent
-            while current != current.parent:
-                if (current / ".oat-root").exists() or (
-                    current / ".agent" / "memory" / "constitution.md"
-                ).exists():
-                    org_root_path = current
-                    break
-                current = current.parent
+            # Try to find org root by walking up (prioritizes .oat-root)
+            org_root_path = find_org_root_by_walking(repo_root)
 
         if not org_root_path:
             _error("Could not determine org root. Use --org-root to specify.", ctx)
@@ -778,6 +932,249 @@ def _error(message: str, ctx):
         click.echo(f"Error: {message}", err=True)
 
 
+def _find_file_in_locations(
+    file_path: str, personal_overlay, org_root: Path, repo_root: Path
+) -> tuple:
+    """
+    Find a file in the correct precedence order: personal -> org -> project.
+
+    Args:
+        file_path: Relative path from .agent (e.g., "skills/db.md")
+        personal_overlay: Path to personal overlay (already the .agent directory, e.g., ~/.agent)
+        org_root: Path to organization root
+        repo_root: Path to repository root
+
+    Returns:
+        Tuple of (found_path, locations_found_list)
+        found_path is None if not found anywhere
+        locations_found_list contains all locations where file exists
+    """
+    locations_found = []
+    found_path = None
+
+    # 1. Check personal overlay (highest precedence)
+    if personal_overlay:
+        personal_path = personal_overlay / file_path
+        if personal_path.exists():
+            locations_found.append(("personal", personal_path))
+            found_path = personal_path
+
+    # 2. Check org root
+    org_path = org_root / ".agent" / file_path
+    if org_path.exists():
+        locations_found.append(("org", org_path))
+        if found_path is None:
+            found_path = org_path
+
+    # 3. Check project repo (lowest precedence)
+    project_path = repo_root / ".agent" / file_path
+    if project_path.exists():
+        locations_found.append(("project", project_path))
+        if found_path is None:
+            found_path = project_path
+
+    return found_path, locations_found
+
+
+def _generate_compile_summary(
+    repo_root: Path,
+    org_root: Path,
+    personal_overlay,
+    inherits_config: dict,
+    options: CompileOptions,
+    output_path: Path,
+    target=None,
+) -> str:
+    """
+    Generate a summary of what will be compiled, including file locations and missing files.
+    Files are searched in order: personal -> org -> project.
+
+    Args:
+        repo_root: Path to repository root
+        org_root: Path to organization root
+        personal_overlay: Path to personal overlay (optional)
+        inherits_config: Parsed inherits.yaml configuration
+        options: Compile options
+        output_path: Path where output will be written
+        target: Target IDE name (optional)
+
+    Returns:
+        Formatted summary string
+    """
+
+    lines = []
+    missing_count = 0
+    warnings = []
+
+    # Get configuration
+    skills_config = get_skills_from_config(inherits_config)
+    personas_list = get_personas_from_config(inherits_config)
+    teams_list = get_teams_from_config(inherits_config)
+
+    # Apply filters
+    universal_skills = skills_config.get("universal", []).copy()
+    for skill in options.exclude_skills:
+        if skill in universal_skills:
+            universal_skills.remove(skill)
+    for skill in options.include_skills:
+        if skill not in universal_skills:
+            universal_skills.append(skill)
+
+    personas = personas_list.copy()
+    for persona in options.exclude_personas:
+        if persona in personas:
+            personas.remove(persona)
+    for persona in options.include_personas:
+        if persona not in personas:
+            personas.append(persona)
+
+    # Entry Point
+    agents_md_path = repo_root / "AGENTS.md"
+    if agents_md_path.exists():
+        lines.append(f"✓ Entry Point: {agents_md_path}")
+    else:
+        lines.append(f"○ Entry Point: {agents_md_path} (optional, not found)")
+
+    # Org Memory
+    lines.append("\nOrg Memory:")
+    constitution_path = org_root / ".agent" / "memory" / "constitution.md"
+    if constitution_path.exists():
+        lines.append(f"  ✓ Constitution: {constitution_path}")
+    else:
+        lines.append(f"  ❌ MISSING: Constitution: {constitution_path}")
+        missing_count += 1
+
+    general_context_path = org_root / ".agent" / "memory" / "general-context.md"
+    if general_context_path.exists():
+        lines.append(f"  ✓ General Context: {general_context_path}")
+    else:
+        lines.append(f"  ○ General Context: {general_context_path} (optional)")
+
+    # Teams
+    if teams_list:
+        lines.append("\nTeams:")
+        for team_name in teams_list:
+            file_path = f"memory/teams/{team_name}.md"
+            found_path, locations = _find_file_in_locations(
+                file_path, personal_overlay, org_root, repo_root
+            )
+            if found_path:
+                location_names = [loc[0] for loc in locations]
+                primary_loc = locations[0][0]
+                if len(locations) > 1:
+                    warnings.append(
+                        f"Team '{team_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
+                    )
+                lines.append(f"  ✓ {team_name}: {found_path} [{primary_loc}]")
+            else:
+                lines.append(f"  ❌ MISSING: {team_name}")
+                missing_count += 1
+
+    # Universal Skills
+    if universal_skills:
+        lines.append("\nUniversal Skills:")
+        for skill_name in universal_skills:
+            file_path = f"skills/{skill_name}.md"
+            found_path, locations = _find_file_in_locations(
+                file_path, personal_overlay, org_root, repo_root
+            )
+            if found_path:
+                location_names = [loc[0] for loc in locations]
+                primary_loc = locations[0][0]
+                if len(locations) > 1:
+                    warnings.append(
+                        f"Skill '{skill_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
+                    )
+                lines.append(f"  ✓ {skill_name}: {found_path} [{primary_loc}]")
+            else:
+                lines.append(f"  ❌ MISSING: {skill_name}")
+                missing_count += 1
+
+    # Language Skills
+    lang_skills_raw: dict = skills_config.get("languages", {})
+    language_skills = lang_skills_raw if isinstance(lang_skills_raw, dict) else {}
+    if language_skills:
+        lines.append("\nLanguage Skills:")
+        for lang, lang_skill_list in language_skills.items():
+            for skill_name in lang_skill_list:
+                file_path = f"skills/{lang}/{skill_name}.md"
+                found_path, locations = _find_file_in_locations(
+                    file_path, personal_overlay, org_root, repo_root
+                )
+                if found_path:
+                    location_names = [loc[0] for loc in locations]
+                    primary_loc = locations[0][0]
+                    if len(locations) > 1:
+                        warnings.append(
+                            f"Skill '{lang}/{skill_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
+                        )
+                    lines.append(
+                        f"  ✓ {lang}/{skill_name}: {found_path} [{primary_loc}]"
+                    )
+                else:
+                    lines.append(f"  ❌ MISSING: {lang}/{skill_name}")
+                    missing_count += 1
+
+    # Personas
+    if personas:
+        lines.append("\nPersonas:")
+        for persona_name in personas:
+            file_path = f"personas/{persona_name}.md"
+            found_path, locations = _find_file_in_locations(
+                file_path, personal_overlay, org_root, repo_root
+            )
+            if found_path:
+                location_names = [loc[0] for loc in locations]
+                primary_loc = locations[0][0]
+                if len(locations) > 1:
+                    warnings.append(
+                        f"Persona '{persona_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
+                    )
+                lines.append(f"  ✓ {persona_name}: {found_path} [{primary_loc}]")
+            else:
+                lines.append(f"  ❌ MISSING: {persona_name}")
+                missing_count += 1
+
+    # Project Rules
+    lines.append("\nProject Rules:")
+    project_md_path = repo_root / ".agent" / "project.md"
+    if project_md_path.exists():
+        lines.append(f"  ✓ Project Rules: {project_md_path}")
+    else:
+        lines.append(f"  ○ Project Rules: {project_md_path} (optional)")
+
+    # Personal Overlay
+    if not options.no_personal and personal_overlay:
+        lines.append("\nPersonal Overlay:")
+        lines.append(f"  ✓ Personal Overlay: {personal_overlay}")
+        personal_memory_path = personal_overlay / "memory" / "personal-context.md"
+        if personal_memory_path.exists():
+            lines.append(f"    ✓ Personal Memory: {personal_memory_path}")
+        me_path = personal_overlay / "personas" / "me.md"
+        if me_path.exists():
+            lines.append(f"    ✓ Personal Persona: {me_path}")
+    elif not options.no_personal:
+        lines.append("\nPersonal Overlay:")
+        lines.append("  ○ Personal Overlay: Not found (optional)")
+
+    # Output path
+    lines.append("\nOutput:")
+    if target:
+        lines.append(f"  → {output_path} (target: {target})")
+    else:
+        lines.append(f"  → {output_path}")
+
+    if warnings:
+        lines.append("\n⚠️  Warnings (non-blocking):")
+        for warning in warnings:
+            lines.append(f"  ⚠ {warning}")
+
+    if missing_count > 0:
+        lines.append(f"\n❌ Error: {missing_count} file(s) are missing!")
+
+    return "\n".join(lines)
+
+
 @init.command("org")
 @click.option("--name", default="My Org", help="Organization name")
 @click.option("--force", is_flag=True, help="Overwrite existing files")
@@ -903,12 +1300,12 @@ def init_personal(ctx, path, force):
 
         # 1. Personal Memory
         _create_file(
-            personal_path / ".agent" / "memory" / "personal-context.md",
+            personal_path / "memory" / "personal-context.md",
             get_personal_context_md_template(),
         )
 
         # 2. Personal Skills (dir only)
-        (personal_path / ".agent" / "skills").mkdir(parents=True, exist_ok=True)
+        (personal_path / "skills").mkdir(parents=True, exist_ok=True)
 
         # 3. Personal Personas (me.md)
         me_content = get_me_md_template()
@@ -916,7 +1313,7 @@ def init_personal(ctx, path, force):
         # Interactive prompt for team if not provided (and not force? force doesn't imply defaults, just overwrite)
         # We only prompt if we are creating the file or if we want to update it?
         # For simplicity, let's prompt if we are creating it or overwriting it.
-        if (not (personal_path / ".agent" / "personas" / "me.md").exists()) or force:
+        if (not (personal_path / "personas" / "me.md").exists()) or force:
             team = ""
             if sys.stdin.isatty():
                 team = click.prompt(
@@ -940,7 +1337,7 @@ def init_personal(ctx, path, force):
 
                     me_content = re.sub(r"team: \[.*\]", f"team: [{team}]", me_content)
 
-        _create_file(personal_path / ".agent" / "personas" / "me.md", me_content)
+        _create_file(personal_path / "personas" / "me.md", me_content)
 
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
@@ -976,25 +1373,28 @@ def _run_setup(ctx):
                     )
 
         # Determine org root
+        # First, check if repo_root itself is the org root (has .oat-root)
         org_root_path = None
-        if "org_root" in current_config:
-            org_root_path = (
-                repo_root / ".agent" / current_config["org_root"]
-            ).resolve()
+        if (repo_root / ".oat-root").exists():
+            org_root_path = repo_root
+        elif "org_root" in current_config:
+            # Try to resolve from inherits.yaml
+            org_root_path = (repo_root / current_config["org_root"]).resolve()
+            # Verify it's actually an org root
+            if not org_root_path.exists() or not (
+                (org_root_path / ".oat-root").exists()
+                or (org_root_path / ".agent" / "memory" / "constitution.md").exists()
+            ):
+                org_root_path = None
 
-        if not org_root_path or not org_root_path.exists():
-            current = repo_root.parent
-            while current != current.parent:
-                if (current / ".oat-root").exists() or (
-                    current / ".agent" / "memory" / "constitution.md"
-                ).exists():
-                    org_root_path = current
-                    break
-                current = current.parent
+        # If not found, walk up the directory tree looking for .oat-root
+        if not org_root_path:
+            org_root_path = find_org_root_by_walking(repo_root)
 
         if not org_root_path:
             _error(
-                "Could not find Organization Root. Please run 'oat init project --org-root <path>' first to link.",
+                "Could not find Organization Root. A directory with a .oat-root file must exist. "
+                "Please run 'oat init org' to create one, or 'oat init project --org-root <path>' to link to an existing one.",
                 ctx,
             )
             sys.exit(1)
@@ -1155,11 +1555,237 @@ def _run_setup(ctx):
         if not ctx.obj["quiet"]:
             click.echo(f"\nConfiguration saved to {inherits_path}")
 
+        # Run sync from_template to copy missing files
+        if not ctx.obj["quiet"]:
+            click.echo("\nSyncing templates to .agent folder...")
+        _sync_from_template(repo_root, new_config, ctx)
+
     except ImportError:
         _error(
             "Module 'questionary' not found. Please reinstall org-agentic-toolkit.", ctx
         )
         sys.exit(1)
+    except Exception as e:
+        _error(f"Unexpected error: {e}", ctx)
+        sys.exit(1)
+
+
+def _sync_from_template(repo_root: Path, config: dict, ctx):
+    """
+    Sync template files to .agent folder based on inherits.yaml configuration.
+
+    Args:
+        repo_root: Path to repository root
+        config: Parsed inherits.yaml configuration dict
+        ctx: Click context
+    """
+    import importlib.resources
+
+    added_files = []
+    removed_suggestions = []
+
+    try:
+        templates_root = importlib.resources.files("oat.templates")
+        agent_dir = repo_root / ".agent"
+
+        # Sync Universal Skills
+        skills_config = config.get("skills", {})
+        universal_skills = skills_config.get("universal", [])
+        skills_dir = agent_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        templates_skills_dir = templates_root.joinpath("skills")
+        if templates_skills_dir.is_dir():
+            # Get all existing files in .agent/skills
+            existing_skills = set()
+            if skills_dir.exists():
+                for f in skills_dir.glob("*.md"):
+                    existing_skills.add(f.stem)
+
+            # Copy missing universal skills
+            for skill_name in universal_skills:
+                template_file = templates_skills_dir.joinpath(f"{skill_name}.md")
+                if template_file.is_file():
+                    target_file = skills_dir / f"{skill_name}.md"
+                    if not target_file.exists():
+                        content = template_file.read_text(encoding="utf-8")
+                        target_file.write_text(content, encoding="utf-8")
+                        added_files.append(f".agent/skills/{skill_name}.md")
+                elif skill_name not in existing_skills:
+                    # Skill is in config but template doesn't exist
+                    if not ctx.obj["quiet"]:
+                        click.echo(
+                            f"Warning: Template for skill '{skill_name}' not found in templates",
+                            err=True,
+                        )
+
+            # Suggest removal of skills not in config
+            for existing_skill in existing_skills:
+                if existing_skill not in universal_skills:
+                    removed_suggestions.append(f".agent/skills/{existing_skill}.md")
+
+        # Sync Language Skills
+        language_skills = skills_config.get("languages", {})
+        for lang, lang_skill_list in language_skills.items():
+            lang_skills_dir = skills_dir / lang
+            lang_skills_dir.mkdir(parents=True, exist_ok=True)
+
+            templates_lang_dir = templates_skills_dir.joinpath(lang)
+            if templates_lang_dir.is_dir():
+                # Get existing files
+                existing_lang_skills = set()
+                if lang_skills_dir.exists():
+                    for f in lang_skills_dir.glob("*.md"):
+                        existing_lang_skills.add(f.stem)
+
+                # Copy missing language skills
+                for skill_name in lang_skill_list:
+                    template_file = templates_lang_dir.joinpath(f"{skill_name}.md")
+                    if template_file.is_file():
+                        target_file = lang_skills_dir / f"{skill_name}.md"
+                        if not target_file.exists():
+                            content = template_file.read_text(encoding="utf-8")
+                            target_file.write_text(content, encoding="utf-8")
+                            added_files.append(f".agent/skills/{lang}/{skill_name}.md")
+                    elif skill_name not in existing_lang_skills:
+                        if not ctx.obj["quiet"]:
+                            click.echo(
+                                f"Warning: Template for skill '{lang}/{skill_name}' not found in templates",
+                                err=True,
+                            )
+
+                # Suggest removal
+                for existing_skill in existing_lang_skills:
+                    if existing_skill not in lang_skill_list:
+                        removed_suggestions.append(
+                            f".agent/skills/{lang}/{existing_skill}.md"
+                        )
+
+        # Sync Personas
+        personas_list = config.get("personas", [])
+        personas_dir = agent_dir / "personas"
+        personas_dir.mkdir(parents=True, exist_ok=True)
+
+        templates_personas_dir = templates_root.joinpath("personas")
+        if templates_personas_dir.is_dir():
+            # Get existing files
+            existing_personas = set()
+            if personas_dir.exists():
+                for f in personas_dir.glob("*.md"):
+                    existing_personas.add(f.stem)
+
+            # Copy missing personas
+            for persona_name in personas_list:
+                template_file = templates_personas_dir.joinpath(f"{persona_name}.md")
+                if template_file.is_file():
+                    target_file = personas_dir / f"{persona_name}.md"
+                    if not target_file.exists():
+                        content = template_file.read_text(encoding="utf-8")
+                        target_file.write_text(content, encoding="utf-8")
+                        added_files.append(f".agent/personas/{persona_name}.md")
+                elif persona_name not in existing_personas:
+                    if not ctx.obj["quiet"]:
+                        click.echo(
+                            f"Warning: Template for persona '{persona_name}' not found in templates",
+                            err=True,
+                        )
+
+            # Suggest removal
+            for existing_persona in existing_personas:
+                if existing_persona not in personas_list:
+                    removed_suggestions.append(f".agent/personas/{existing_persona}.md")
+
+        # Sync Teams
+        teams_list = config.get("teams", [])
+        teams_dir = agent_dir / "memory" / "teams"
+        teams_dir.mkdir(parents=True, exist_ok=True)
+
+        templates_teams_dir = templates_root.joinpath("teams")
+        if templates_teams_dir.is_dir():
+            # Get existing files (excluding _template.md)
+            existing_teams = set()
+            if teams_dir.exists():
+                for f in teams_dir.glob("*.md"):
+                    if f.stem != "_template":
+                        existing_teams.add(f.stem)
+
+            # Copy missing teams
+            for team_name in teams_list:
+                template_file = templates_teams_dir.joinpath(f"{team_name}.md")
+                if template_file.is_file():
+                    target_file = teams_dir / f"{team_name}.md"
+                    if not target_file.exists():
+                        content = template_file.read_text(encoding="utf-8")
+                        target_file.write_text(content, encoding="utf-8")
+                        added_files.append(f".agent/memory/teams/{team_name}.md")
+                elif team_name not in existing_teams:
+                    if not ctx.obj["quiet"]:
+                        click.echo(
+                            f"Warning: Template for team '{team_name}' not found in templates",
+                            err=True,
+                        )
+
+            # Suggest removal
+            for existing_team in existing_teams:
+                if existing_team not in teams_list:
+                    removed_suggestions.append(
+                        f".agent/memory/teams/{existing_team}.md"
+                    )
+
+        # Report results
+        if not ctx.obj["quiet"]:
+            if added_files:
+                click.echo(f"\nAdded {len(added_files)} file(s):")
+                for file_path in added_files:
+                    click.echo(f"  + {file_path}")
+            else:
+                click.echo("\nNo new files to add.")
+
+            if removed_suggestions:
+                click.echo(
+                    f"\nNote: {len(removed_suggestions)} file(s) in .agent/ are not in inherits.yaml and may be removed:"
+                )
+                for file_path in removed_suggestions:
+                    click.echo(f"  - {file_path}")
+
+    except Exception as e:
+        if not ctx.obj["quiet"]:
+            click.echo(f"Warning: Error syncing templates: {e}", err=True)
+
+
+@cli.group()
+def sync():
+    """Synchronize project files with templates."""
+    pass
+
+
+@sync.command("from_template")
+@click.option("--repo", type=click.Path(exists=True), help="Explicit repo root path")
+@click.pass_context
+def sync_from_template(ctx, repo):
+    """Sync template files to .agent folder based on inherits.yaml configuration."""
+    try:
+        repo_root = find_repo_root(explicit_path=Path(repo) if repo else None)
+        if not repo_root:
+            _error(
+                "Could not find repo root. Run from inside a repository or use --repo.",
+                ctx,
+            )
+            sys.exit(1)
+
+        inherits_path = repo_root / ".agent" / "inherits.yaml"
+        if not inherits_path.exists():
+            _error("No .agent/inherits.yaml found. Run 'oat init project' first.", ctx)
+            sys.exit(1)
+
+        try:
+            config = load_inherits_yaml(inherits_path)
+        except ConfigError as e:
+            _error(f"Error loading inherits.yaml: {e}", ctx)
+            sys.exit(1)
+
+        _sync_from_template(repo_root, config, ctx)
+
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
         sys.exit(1)

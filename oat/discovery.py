@@ -63,9 +63,42 @@ def find_repo_root(
     return None
 
 
+def find_org_root_by_walking(start_path: Path) -> Optional[Path]:
+    """
+    Find the organization root by walking up the directory tree looking for .oat-root.
+
+    Args:
+        start_path: Path to start searching from
+
+    Returns:
+        Path to org root, or None if not found
+    """
+    current = Path(start_path).resolve()
+
+    # Walk up the directory tree
+    while current != current.parent:
+        # Check for .oat-root marker (primary indicator)
+        if (current / ".oat-root").exists():
+            return current
+
+        # Check for .agent/memory/constitution.md (fallback)
+        if (current / ".agent" / "memory" / "constitution.md").exists():
+            return current
+
+        current = current.parent
+
+    # Check root directory as well
+    if (current / ".oat-root").exists():
+        return current
+    if (current / ".agent" / "memory" / "constitution.md").exists():
+        return current
+
+    return None
+
+
 def find_org_root(repo_root: Path, inherits_config: dict) -> Optional[Path]:
     """
-    Find the organization root from the inherits.yaml configuration.
+    Find the organization root from the inherits.yaml configuration or by walking up.
 
     Args:
         repo_root: Path to the repository root
@@ -81,35 +114,42 @@ def find_org_root(repo_root: Path, inherits_config: dict) -> Optional[Path]:
         if org_root.exists() and _is_org_root(org_root):
             return org_root
 
-    # Get org_root from inherits.yaml
+    # Try to get org_root from inherits.yaml
     org_root_rel = inherits_config.get("org_root")
-    if not org_root_rel:
-        return None
+    if org_root_rel:
+        # Absolute paths are forbidden
+        if not Path(org_root_rel).is_absolute():
+            # Resolve relative path from repo root
+            org_root = (repo_root / org_root_rel).resolve()
+            # Verify it's actually an org root
+            if _is_org_root(org_root):
+                return org_root
 
-    # Absolute paths are forbidden
-    if Path(org_root_rel).is_absolute():
-        return None
-
-    # Resolve relative path from repo root
-    org_root = (repo_root / org_root_rel).resolve()
-
-    # Verify it's actually an org root
-    if _is_org_root(org_root):
-        return org_root
-
-    return None
+    # Fallback: walk up from repo_root looking for .oat-root
+    return find_org_root_by_walking(repo_root)
 
 
 def _is_org_root(path: Path) -> bool:
-    """Check if a path is a valid org root by looking for .oat-root marker or .agent/memory/constitution.md."""
+    """
+    Check if a path is a valid org root.
+
+    Primary indicator: .oat-root marker file
+    Fallback indicator: .agent/memory/constitution.md
+
+    Args:
+        path: Path to check
+
+    Returns:
+        True if path is a valid org root
+    """
     if not path.exists() or not path.is_dir():
         return False
 
-    # Check for .oat-root marker
+    # Check for .oat-root marker (primary indicator)
     if (path / ".oat-root").exists():
         return True
 
-    # Check for .agent/memory/constitution.md
+    # Check for .agent/memory/constitution.md (fallback)
     if (path / ".agent" / "memory" / "constitution.md").exists():
         return True
 

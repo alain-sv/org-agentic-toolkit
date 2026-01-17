@@ -72,7 +72,13 @@ cd my-org
 oat init org
 ```
 
-This creates the full structure for an organization's agent rules.
+This creates the full structure for an organization's agent rules, including a `.oat-root` marker file.
+
+**Organization Root Discovery:**
+- The `.oat-root` file is the **primary indicator** for an organization root
+- OAT automatically discovers org roots by walking up the directory tree looking for `.oat-root`
+- If `.oat-root` is not found, it falls back to checking for `.agent/memory/constitution.md`
+- You can also specify the org root path in `.agent/inherits.yaml` or via the `OAT_ROOT` environment variable
 
 ### 3. Initialize Personal Overlay (Optional)
 

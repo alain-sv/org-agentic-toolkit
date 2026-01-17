@@ -44,6 +44,40 @@ class CompileError(Exception):
     pass
 
 
+def _find_file_in_locations(
+    file_path: str, personal_overlay: Optional[Path], org_root: Path, repo_root: Path
+) -> Optional[Path]:
+    """
+    Find a file in the correct precedence order: personal -> org -> project.
+    
+    Args:
+        file_path: Relative path from .agent (e.g., "skills/db.md")
+        personal_overlay: Path to personal overlay (already the .agent directory, e.g., ~/.agent)
+        org_root: Path to organization root
+        repo_root: Path to repository root
+        
+    Returns:
+        Path to the file if found, None otherwise
+    """
+    # 1. Check personal overlay (highest precedence)
+    if personal_overlay:
+        personal_path = personal_overlay / file_path
+        if personal_path.exists():
+            return personal_path
+    
+    # 2. Check org root
+    org_path = org_root / ".agent" / file_path
+    if org_path.exists():
+        return org_path
+    
+    # 3. Check project repo (lowest precedence)
+    project_path = repo_root / ".agent" / file_path
+    if project_path.exists():
+        return project_path
+    
+    return None
+
+
 def compile_document(
     repo_root: Path,
     org_root: Path,
@@ -143,7 +177,7 @@ def compile_document(
     
     # Also check personal overlay for team context
     if not teams_to_load and not options.no_personal and personal_overlay:
-        me_path = personal_overlay / ".agent" / "personas" / "me.md"
+        me_path = personal_overlay / "personas" / "me.md"
         if me_path.exists():
             me_content = _read_file(me_path)
             # Try to extract team from me.md (format: "team: [TEAM_NAME]")
@@ -155,17 +189,23 @@ def compile_document(
                         break
     
     for team_name in teams_to_load:
-        team_path = org_root / ".agent" / "memory" / "teams" / f"{team_name}.md"
-        if team_path.exists():
+        team_path = _find_file_in_locations(
+            f"memory/teams/{team_name}.md", personal_overlay, org_root, repo_root
+        )
+        if team_path:
             content = _read_file(team_path)
             sources.append((f"Team: {team_name}", team_path, content))
             metadata["teams"].append(team_name)
+        else:
+            raise CompileError(f"Team not found: {team_name}")
     
     # 3. Universal Skills
     for skill_name in universal_skills:
-        skill_path = org_root / ".agent" / "skills" / f"{skill_name}.md"
-        if not skill_path.exists():
-            raise CompileError(f"Universal skill not found: {skill_path}")
+        skill_path = _find_file_in_locations(
+            f"skills/{skill_name}.md", personal_overlay, org_root, repo_root
+        )
+        if not skill_path:
+            raise CompileError(f"Universal skill not found: {skill_name}")
         content = _read_file(skill_path)
         sources.append((f"Skill: {skill_name}", skill_path, content))
         metadata["universal_skills"].append(skill_name)
@@ -175,20 +215,24 @@ def compile_document(
     for lang, lang_skills in language_skills.items():
         lang_skill_list = []
         for skill_name in lang_skills:
-            skill_path = org_root / ".agent" / "skills" / lang / f"{skill_name}.md"
-            if not skill_path.exists():
-                raise CompileError(f"Language skill not found: {skill_path}")
+            skill_path = _find_file_in_locations(
+                f"skills/{lang}/{skill_name}.md", personal_overlay, org_root, repo_root
+            )
+            if not skill_path:
+                raise CompileError(f"Language skill not found: {lang}/{skill_name}")
             content = _read_file(skill_path)
             sources.append((f"Skill: {lang}/{skill_name}", skill_path, content))
             lang_skill_list.append(skill_name)
         if lang_skill_list:
             metadata["language_skills"][lang] = lang_skill_list
     
-    # 5. Org Personas
+    # 5. Personas
     for persona_name in personas:
-        persona_path = org_root / ".agent" / "personas" / f"{persona_name}.md"
-        if not persona_path.exists():
-            raise CompileError(f"Persona not found: {persona_path}")
+        persona_path = _find_file_in_locations(
+            f"personas/{persona_name}.md", personal_overlay, org_root, repo_root
+        )
+        if not persona_path:
+            raise CompileError(f"Persona not found: {persona_name}")
         content = _read_file(persona_path)
         sources.append((f"Persona: {persona_name}", persona_path, content))
         metadata["personas"].append(persona_name)
@@ -203,20 +247,20 @@ def compile_document(
     # 7. Personal Overlay (optional, lowest precedence)
     if not options.no_personal and personal_overlay:
         # Personal memory
-        personal_memory_path = personal_overlay / ".agent" / "memory" / "personal-context.md"
+        personal_memory_path = personal_overlay / "memory" / "personal-context.md"
         if personal_memory_path.exists():
             content = _read_file(personal_memory_path)
             sources.append(("Personal Memory", personal_memory_path, content))
         
         # Personal skills
-        personal_skills_dir = personal_overlay / ".agent" / "skills"
+        personal_skills_dir = personal_overlay / "skills"
         if personal_skills_dir.exists():
             for skill_file in sorted(personal_skills_dir.glob("*.md")):
                 content = _read_file(skill_file)
                 sources.append((f"Personal Skill: {skill_file.stem}", skill_file, content))
         
         # Personal personas
-        personal_personas_dir = personal_overlay / ".agent" / "personas"
+        personal_personas_dir = personal_overlay / "personas"
         if personal_personas_dir.exists():
             for persona_file in sorted(personal_personas_dir.glob("*.md")):
                 # Skip me.md as it's used for team context, not compilation

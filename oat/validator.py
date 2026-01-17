@@ -369,12 +369,12 @@ def validate_personal_overlay(personal_path: Path, strict: bool = False) -> Vali
         return result
         
     # Check personal context (recommended)
-    context_path = personal_path / ".agent" / "memory" / "personal-context.md"
+    context_path = personal_path / "memory" / "personal-context.md"
     if not context_path.exists():
         result.add_warning("Personal context not found", context_path)
         
     # Check me.md (recommended for team context)
-    me_path = personal_path / ".agent" / "personas" / "me.md"
+    me_path = personal_path / "personas" / "me.md"
     if not me_path.exists():
         result.add_warning("me.md identity file not found", me_path)
         
