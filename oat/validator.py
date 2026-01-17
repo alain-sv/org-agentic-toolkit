@@ -10,7 +10,7 @@ from oat.config import (
     load_memory_manifest,
     validate_inherits_structure,
     get_skills_from_config,
-    get_sub_agents_from_config,
+    get_personas_from_config,
     get_teams_from_config,
     ConfigError,
 )
@@ -108,11 +108,11 @@ def validate_repo(repo_root: Path, strict: bool = False) -> ValidationResult:
     if not result.is_valid():
         return result  # Can't continue with invalid structure
     
-    # Check skills and sub_agents sections exist
+    # Check skills and personas sections exist
     if "skills" not in inherits_config:
         result.add_error("Missing required field: skills", inherits_path)
-    if "sub_agents" not in inherits_config:
-        result.add_error("Missing required field: sub_agents", inherits_path)
+    if "personas" not in inherits_config:
+        result.add_error("Missing required field: personas", inherits_path)
     
     if not result.is_valid():
         return result
@@ -146,12 +146,12 @@ def validate_repo(repo_root: Path, strict: bool = False) -> ValidationResult:
             if not skill_path.exists():
                 result.add_error(f"Language skill not found: {skill_path}", skill_path)
     
-    # Validate sub-agents
-    sub_agents_list = get_sub_agents_from_config(inherits_config)
-    for sub_agent_name in sub_agents_list:
-        sub_agent_path = org_root / ".agent" / "sub-agents" / f"{sub_agent_name}.md"
-        if not sub_agent_path.exists():
-            result.add_error(f"Sub-agent not found: {sub_agent_path}", sub_agent_path)
+    # Validate personas
+    personas_list = get_personas_from_config(inherits_config)
+    for persona_name in personas_list:
+        persona_path = org_root / ".agent" / "personas" / f"{persona_name}.md"
+        if not persona_path.exists():
+            result.add_error(f"Persona not found: {persona_path}", persona_path)
     
     # Validate teams (if specified)
     teams_list = get_teams_from_config(inherits_config)
@@ -190,7 +190,7 @@ def validate_repo(repo_root: Path, strict: bool = False) -> ValidationResult:
 def _validate_markdown_files(result: ValidationResult, org_root: Path, inherits_config: dict):
     """Validate that all referenced markdown files are readable."""
     skills_config = get_skills_from_config(inherits_config)
-    sub_agents_list = get_sub_agents_from_config(inherits_config)
+    personas_list = get_personas_from_config(inherits_config)
     teams_list = get_teams_from_config(inherits_config)
     
     # Check universal skills
@@ -214,15 +214,15 @@ def _validate_markdown_files(result: ValidationResult, org_root: Path, inherits_
                 except Exception as e:
                     result.add_error(f"Language skill file not readable: {e}", skill_path)
     
-    # Check sub-agents
-    for sub_agent_name in sub_agents_list:
-        sub_agent_path = org_root / ".agent" / "sub-agents" / f"{sub_agent_name}.md"
-        if sub_agent_path.exists():
+    # Check personas
+    for persona_name in personas_list:
+        persona_path = org_root / ".agent" / "personas" / f"{persona_name}.md"
+        if persona_path.exists():
             try:
-                with open(sub_agent_path, "r", encoding="utf-8") as f:
+                with open(persona_path, "r", encoding="utf-8") as f:
                     f.read()
             except Exception as e:
-                result.add_error(f"Sub-agent file not readable: {e}", sub_agent_path)
+                result.add_error(f"Persona file not readable: {e}", persona_path)
     
     # Check teams
     for team_name in teams_list:
@@ -274,3 +274,122 @@ def _check_forbidden_constructs(result: ValidationResult, inherits_config: dict,
     
     # Check for other forbidden patterns
     # (Add more checks as needed)
+
+def validate_org_root(org_root: Path, strict: bool = False) -> ValidationResult:
+    """
+    Validate an organization root directory.
+    
+    Args:
+        org_root: Path to org root
+        strict: If True, treat warnings as errors
+    
+    Returns:
+        ValidationResult
+    """
+    result = ValidationResult()
+    
+    # Check marker file (recommended)
+    if not (org_root / ".oat-root").exists():
+        result.add_warning(".oat-root marker file missing", org_root / ".oat-root")
+    
+    # Check constitution (required)
+    constitution_path = org_root / ".agent" / "memory" / "constitution.md"
+    if not constitution_path.exists():
+        result.add_error("Constitution not found (required)", constitution_path)
+    else:
+        # Validate version if present
+        _validate_constitution_version(result, constitution_path)
+    
+    # Check general context (recommended)
+    gen_context_path = org_root / ".agent" / "memory" / "general-context.md"
+    if not gen_context_path.exists():
+        result.add_warning("General context not found", gen_context_path)
+    
+    # Check manifest (recommended)
+    manifest_path = org_root / ".agent" / "memory" / "manifest.yaml"
+    if not manifest_path.exists():
+        result.add_warning("Memory manifest not found", manifest_path)
+    else:
+        # Validate manifest syntax
+        manifest = load_memory_manifest(manifest_path)
+        if manifest is None:
+            result.add_error("Invalid memory manifest", manifest_path)
+    
+    # Check directories
+    skills_dir = org_root / ".agent" / "skills"
+    if not skills_dir.exists():
+        result.add_warning("Skills directory not found", skills_dir)
+    
+    personas_dir = org_root / ".agent" / "personas"
+    if not personas_dir.exists():
+        result.add_warning("Personas directory not found", personas_dir)
+        
+    # Validate markdown files readability
+    if skills_dir.exists():
+        for f in skills_dir.glob("**/*.md"):
+            try:
+                with open(f, "r", encoding="utf-8") as file:
+                    file.read()
+            except Exception as e:
+                result.add_error(f"Skill file not readable: {e}", f)
+    
+    if personas_dir.exists():
+        for f in personas_dir.glob("*.md"):
+            try:
+                with open(f, "r", encoding="utf-8") as file:
+                    file.read()
+            except Exception as e:
+                result.add_error(f"Persona file not readable: {e}", f)
+
+    # Convert warnings if strict
+    if strict:
+        for warning in result.warnings:
+            result.add_error(warning.message, warning.file, warning.line)
+        result.warnings = []
+    
+    return result
+
+
+def validate_personal_overlay(personal_path: Path, strict: bool = False) -> ValidationResult:
+    """
+    Validate personal overlay directory.
+    
+    Args:
+        personal_path: Path to personal overlay
+        strict: If True, treat warnings as errors
+    
+    Returns:
+        ValidationResult
+    """
+    result = ValidationResult()
+    
+    # Check if directory exists
+    if not personal_path.exists():
+        result.add_error(f"Personal overlay directory does not exist: {personal_path}", personal_path)
+        return result
+        
+    # Check personal context (recommended)
+    context_path = personal_path / ".agent" / "memory" / "personal-context.md"
+    if not context_path.exists():
+        result.add_warning("Personal context not found", context_path)
+        
+    # Check me.md (recommended for team context)
+    me_path = personal_path / ".agent" / "personas" / "me.md"
+    if not me_path.exists():
+        result.add_warning("me.md identity file not found", me_path)
+        
+    # Validate markdown files
+    for f in personal_path.glob("**/*.md"):
+        try:
+            with open(f, "r", encoding="utf-8") as file:
+                file.read()
+        except Exception as e:
+            result.add_error(f"File not readable: {e}", f)
+            
+    # Convert warnings if strict
+    if strict:
+        for warning in result.warnings:
+            result.add_error(warning.message, warning.file, warning.line)
+        result.warnings = []
+            
+    return result

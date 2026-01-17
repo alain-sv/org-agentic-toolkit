@@ -7,7 +7,7 @@ name = "org-agentic-toolkit"
 version = "1.0.0"
 description = "Governance infrastructure that compiles and validates organization-level agent rules"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Org Agentic Toolkit Contributors" }]
 keywords = ["agent", "governance", "rules", "compilation", "validation"]
@@ -34,7 +34,10 @@ dev = [
 oat = "oat.cli:main"
 
 [tool.setuptools]
-packages = ["oat"]
+packages = ["oat", "oat.templates"]
+
+[tool.setuptools.package-data]
+"oat.templates" = ["**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

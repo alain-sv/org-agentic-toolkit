@@ -124,10 +124,14 @@ def validate_inherits_structure(config: Dict[str, Any]) -> List[str]:
     else:
         errors.append("skills must be a dict")
     
-    if "sub_agents" not in config:
-        errors.append("Missing required field: sub_agents")
-    elif not isinstance(config["sub_agents"], list):
-        errors.append("sub_agents must be a list")
+    if "personas" not in config:
+        errors.append("Missing required field: personas")
+    elif not isinstance(config["personas"], list):
+        errors.append("personas must be a list")
+    
+    if "target_agents" in config:
+        if not isinstance(config["target_agents"], list):
+            errors.append("target_agents must be a list")
     
     # Check for forbidden absolute paths
     if "org_root" in config:
@@ -158,17 +162,17 @@ def get_skills_from_config(config: Dict[str, Any]) -> Dict[str, List[str]]:
     return result
 
 
-def get_sub_agents_from_config(config: Dict[str, Any]) -> List[str]:
+def get_personas_from_config(config: Dict[str, Any]) -> List[str]:
     """
-    Extract sub-agents list from inherits.yaml.
+    Extract personas list from inherits.yaml.
     
     Args:
         config: Parsed inherits.yaml dict
     
     Returns:
-        List of sub-agent names
+        List of persona names
     """
-    return config.get("sub_agents", [])
+    return config.get("personas", [])
 
 
 def get_teams_from_config(config: Dict[str, Any]) -> List[str]:
@@ -182,3 +186,16 @@ def get_teams_from_config(config: Dict[str, Any]) -> List[str]:
         List of team names (empty if not specified)
     """
     return config.get("teams", [])
+
+
+def get_target_agents_from_config(config: Dict[str, Any]) -> List[str]:
+    """
+    Extract target_agents list from inherits.yaml.
+    
+    Args:
+        config: Parsed inherits.yaml dict
+    
+    Returns:
+        List of target agent names (empty if not specified)
+    """
+    return config.get("target_agents", [])

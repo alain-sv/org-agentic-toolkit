@@ -22,8 +22,8 @@ class TestCompileDocument:
         )
         (org_root / ".agent" / "skills").mkdir(parents=True)
         (org_root / ".agent" / "skills" / "git.md").write_text("# Git Skills")
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents" / "backend-developer.md").write_text(
+        (org_root / ".agent" / "personas").mkdir(parents=True)
+        (org_root / ".agent" / "personas" / "backend-developer.md").write_text(
             "# Backend Developer"
         )
         
@@ -36,7 +36,7 @@ class TestCompileDocument:
 skills:
   universal:
     - git
-sub_agents:
+personas:
   - backend-developer
 """)
         (repo_root / ".agent" / "project.md").write_text("# Project Rules")
@@ -61,7 +61,7 @@ sub_agents:
         (repo_root / ".agent" / "inherits.yaml").write_text("""org_root: ../org
 skills:
   universal: []
-sub_agents: []
+personas: []
 """)
         
         options = CompileOptions()
@@ -77,7 +77,7 @@ sub_agents: []
         (org_root / ".agent" / "memory").mkdir(parents=True)
         (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
         (org_root / ".agent" / "skills").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
+        (org_root / ".agent" / "personas").mkdir(parents=True)
         
         # Setup repo
         repo_root = tmp_path / "repo"
@@ -86,7 +86,7 @@ sub_agents: []
         (repo_root / ".agent" / "inherits.yaml").write_text("""org_root: ../org
 skills:
   universal: []
-sub_agents: []
+personas: []
 """)
         
         # Setup personal overlay

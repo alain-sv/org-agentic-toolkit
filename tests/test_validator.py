@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from oat.validator import validate_repo, ValidationResult
+from oat.validator import validate_repo, validate_org_root, validate_personal_overlay, ValidationResult
 
 
 class TestValidateRepo:
@@ -20,8 +20,8 @@ class TestValidateRepo:
         (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
         (org_root / ".agent" / "skills").mkdir(parents=True)
         (org_root / ".agent" / "skills" / "git.md").write_text("# Git")
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents" / "backend-developer.md").write_text(
+        (org_root / ".agent" / "personas").mkdir(parents=True)
+        (org_root / ".agent" / "personas" / "backend-developer.md").write_text(
             "# Backend Developer"
         )
         
@@ -34,7 +34,7 @@ class TestValidateRepo:
 skills:
   universal:
     - git
-sub_agents:
+personas:
   - backend-developer
 """)
         (repo_root / ".agent" / "project.md").write_text("# Project")
@@ -58,7 +58,7 @@ sub_agents:
         repo_root.mkdir()
         (repo_root / ".agent").mkdir()
         (repo_root / ".agent" / "inherits.yaml").write_text("""org_root: ../org
-sub_agents: []
+personas: []
 """)
         
         result = validate_repo(repo_root)
@@ -74,7 +74,7 @@ sub_agents: []
         (org_root / ".agent" / "memory").mkdir(parents=True)
         (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
         (org_root / ".agent" / "skills").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
+        (org_root / ".agent" / "personas").mkdir(parents=True)
         
         # Setup repo
         repo_root = tmp_path / "repo"
@@ -84,7 +84,7 @@ sub_agents: []
 skills:
   universal:
     - missing-skill
-sub_agents: []
+personas: []
 """)
         
         result = validate_repo(repo_root)
@@ -100,7 +100,7 @@ sub_agents: []
         (org_root / ".agent" / "memory").mkdir(parents=True)
         (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
         (org_root / ".agent" / "skills").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
+        (org_root / ".agent" / "personas").mkdir(parents=True)
         
         # Setup repo
         repo_root = tmp_path / "repo"
@@ -109,7 +109,7 @@ sub_agents: []
         (repo_root / ".agent" / "inherits.yaml").write_text("""org_root: ../org
 skills:
   universal: []
-sub_agents: []
+personas: []
 """)
         
         result = validate_repo(repo_root, strict=False)
@@ -125,7 +125,7 @@ sub_agents: []
         (org_root / ".agent" / "memory").mkdir(parents=True)
         (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
         (org_root / ".agent" / "skills").mkdir(parents=True)
-        (org_root / ".agent" / "sub-agents").mkdir(parents=True)
+        (org_root / ".agent" / "personas").mkdir(parents=True)
         
         # Setup repo
         repo_root = tmp_path / "repo"
@@ -134,9 +134,61 @@ sub_agents: []
         (repo_root / ".agent" / "inherits.yaml").write_text("""org_root: ../org
 skills:
   universal: []
-sub_agents: []
+personas: []
 """)
         
         result = validate_repo(repo_root, strict=True)
         assert not result.is_valid()  # Warnings become errors
         assert any("project.md" in e.message.lower() for e in result.errors)
+
+
+class TestValidateOrgRoot:
+    """Test org root validation."""
+    
+    def test_validate_valid_org(self, tmp_path):
+        """Test validation of valid org root."""
+        org_root = tmp_path / "org"
+        org_root.mkdir()
+        
+        # Create required files
+        (org_root / ".oat-root").write_text("")
+        (org_root / ".agent" / "memory").mkdir(parents=True)
+        (org_root / ".agent" / "memory" / "constitution.md").write_text("# Constitution")
+        (org_root / ".agent" / "skills").mkdir(parents=True)
+        (org_root / ".agent" / "personas").mkdir(parents=True)
+        
+        result = validate_org_root(org_root)
+        assert result.is_valid()
+    
+    def test_validate_missing_constitution(self, tmp_path):
+        """Test validation fails when constitution is missing."""
+        org_root = tmp_path / "org"
+        org_root.mkdir()
+        (org_root / ".oat-root").write_text("")
+        (org_root / ".agent" / "memory").mkdir(parents=True)
+        
+        result = validate_org_root(org_root)
+        assert not result.is_valid()
+        assert any("Constitution" in e.message for e in result.errors)
+
+
+class TestValidatePersonalOverlay:
+    """Test personal overlay validation."""
+    
+    def test_validate_valid_personal(self, tmp_path):
+        """Test validation of valid personal overlay."""
+        home = tmp_path / "home"
+        overlay = home / ".agent"
+        overlay.mkdir(parents=True)
+        
+        (overlay / "memory").mkdir(parents=True)
+        (overlay / "memory" / "personal-context.md").write_text("# About Me")
+        
+        result = validate_personal_overlay(overlay)
+        assert result.is_valid()
+    
+    def test_validate_missing_overlay(self, tmp_path):
+        """Test validation fails when overlay directory doesn't exist."""
+        result = validate_personal_overlay(tmp_path / "nonexistent")
+        assert not result.is_valid()
+        assert any("does not exist" in e.message for e in result.errors)

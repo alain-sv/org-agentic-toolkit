@@ -10,8 +10,11 @@ from oat.config import (
     load_inherits_yaml,
     load_memory_manifest,
     get_skills_from_config,
-    get_sub_agents_from_config,
+    get_personas_from_config,
+    get_skills_from_config,
+    get_personas_from_config,
     get_teams_from_config,
+    get_target_agents_from_config,
 )
 
 
@@ -20,8 +23,8 @@ class CompileOptions:
     """Options for compilation."""
     include_skills: List[str] = None
     exclude_skills: List[str] = None
-    include_sub_agents: List[str] = None
-    exclude_sub_agents: List[str] = None
+    include_personas: List[str] = None
+    exclude_personas: List[str] = None
     no_personal: bool = False
     include_hash: bool = False
     
@@ -30,10 +33,10 @@ class CompileOptions:
             self.include_skills = []
         if self.exclude_skills is None:
             self.exclude_skills = []
-        if self.include_sub_agents is None:
-            self.include_sub_agents = []
-        if self.exclude_sub_agents is None:
-            self.exclude_sub_agents = []
+        if self.include_personas is None:
+            self.include_personas = []
+        if self.exclude_personas is None:
+            self.exclude_personas = []
 
 
 class CompileError(Exception):
@@ -65,8 +68,11 @@ def compile_document(
     
     # Get configuration
     skills_config = get_skills_from_config(inherits_config)
-    sub_agents_list = get_sub_agents_from_config(inherits_config)
+    personas_list = get_personas_from_config(inherits_config)
+    skills_config = get_skills_from_config(inherits_config)
+    personas_list = get_personas_from_config(inherits_config)
     teams_list = get_teams_from_config(inherits_config)
+    target_agents = get_target_agents_from_config(inherits_config)
     
     # Apply include/exclude filters
     universal_skills = _apply_filters(
@@ -74,10 +80,10 @@ def compile_document(
         options.include_skills,
         options.exclude_skills
     )
-    sub_agents = _apply_filters(
-        sub_agents_list,
-        options.include_sub_agents,
-        options.exclude_sub_agents
+    personas = _apply_filters(
+        personas_list,
+        options.include_personas,
+        options.exclude_personas
     )
     
     # Load memory manifest
@@ -93,8 +99,9 @@ def compile_document(
         "memory_files": [],
         "universal_skills": [],
         "language_skills": {},
-        "sub_agents": [],
+        "personas": [],
         "teams": [],
+        "target_agents": target_agents,
         "project_rules": None,
         "personal_overlay": None,
     }
@@ -136,7 +143,7 @@ def compile_document(
     
     # Also check personal overlay for team context
     if not teams_to_load and not options.no_personal and personal_overlay:
-        me_path = personal_overlay / ".agent" / "sub-agents" / "me.md"
+        me_path = personal_overlay / ".agent" / "personas" / "me.md"
         if me_path.exists():
             me_content = _read_file(me_path)
             # Try to extract team from me.md (format: "team: [TEAM_NAME]")
@@ -177,14 +184,14 @@ def compile_document(
         if lang_skill_list:
             metadata["language_skills"][lang] = lang_skill_list
     
-    # 5. Org Sub-Agents
-    for sub_agent_name in sub_agents:
-        sub_agent_path = org_root / ".agent" / "sub-agents" / f"{sub_agent_name}.md"
-        if not sub_agent_path.exists():
-            raise CompileError(f"Sub-agent not found: {sub_agent_path}")
-        content = _read_file(sub_agent_path)
-        sources.append((f"Sub-Agent: {sub_agent_name}", sub_agent_path, content))
-        metadata["sub_agents"].append(sub_agent_name)
+    # 5. Org Personas
+    for persona_name in personas:
+        persona_path = org_root / ".agent" / "personas" / f"{persona_name}.md"
+        if not persona_path.exists():
+            raise CompileError(f"Persona not found: {persona_path}")
+        content = _read_file(persona_path)
+        sources.append((f"Persona: {persona_name}", persona_path, content))
+        metadata["personas"].append(persona_name)
     
     # 6. Project Rules
     project_md_path = repo_root / ".agent" / "project.md"
@@ -208,15 +215,15 @@ def compile_document(
                 content = _read_file(skill_file)
                 sources.append((f"Personal Skill: {skill_file.stem}", skill_file, content))
         
-        # Personal sub-agents
-        personal_sub_agents_dir = personal_overlay / ".agent" / "sub-agents"
-        if personal_sub_agents_dir.exists():
-            for sub_agent_file in sorted(personal_sub_agents_dir.glob("*.md")):
+        # Personal personas
+        personal_personas_dir = personal_overlay / ".agent" / "personas"
+        if personal_personas_dir.exists():
+            for persona_file in sorted(personal_personas_dir.glob("*.md")):
                 # Skip me.md as it's used for team context, not compilation
-                if sub_agent_file.name == "me.md":
+                if persona_file.name == "me.md":
                     continue
-                content = _read_file(sub_agent_file)
-                sources.append((f"Personal Sub-Agent: {sub_agent_file.stem}", sub_agent_file, content))
+                content = _read_file(persona_file)
+                sources.append((f"Personal Persona: {persona_file.stem}", persona_file, content))
         
         metadata["personal_overlay"] = str(personal_overlay)
     
@@ -278,6 +285,10 @@ def _extract_version(content: str) -> Optional[str]:
             parts = line.split(":", 1)
             if len(parts) == 2:
                 version = parts[1].strip().strip('"\'')
+                # Remove HTML comment suffix if present
+                if "-->" in version:
+                    version = version.split("-->")[0].strip()
+                
                 # Basic SemVer validation
                 if _is_semver(version):
                     return version
@@ -336,11 +347,14 @@ def _build_traceability_header(metadata: Dict[str, Any], include_hash: bool) -> 
         ])
         lines.append(f"- **Language Skills**: {lang_skills_str}")
     
-    if metadata.get("sub_agents"):
-        lines.append(f"- **Sub-Agents**: {', '.join(metadata['sub_agents'])}")
+    if metadata.get("personas"):
+        lines.append(f"- **Personas**: {', '.join(metadata['personas'])}")
     
     if metadata.get("teams"):
         lines.append(f"- **Teams**: {', '.join(metadata['teams'])}")
+        
+    if metadata.get("target_agents"):
+        lines.append(f"- **Target Agents**: {', '.join(metadata['target_agents'])}")
     
     if metadata.get("project_rules"):
         lines.append(f"- **Project Rules**: `{metadata['project_rules']}`")

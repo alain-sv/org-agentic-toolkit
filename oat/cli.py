@@ -14,16 +14,24 @@ from oat.config import (
     load_memory_manifest,
     load_targets_yaml,
     get_skills_from_config,
-    get_sub_agents_from_config,
+    get_personas_from_config,
     get_teams_from_config,
+    get_target_agents_from_config,
     ConfigError,
 )
 from oat.compiler import compile_document, CompileOptions, CompileError
-from oat.validator import validate_repo, ValidationResult
-from oat.templates import (
+from oat.validator import validate_repo, validate_org_root, validate_personal_overlay, ValidationResult
+from oat.template_manager import (
     get_agents_md_template,
     get_inherits_yaml_template,
     get_project_md_template,
+    get_org_agents_md_template,
+    get_constitution_md_template,
+    get_general_context_md_template,
+    get_manifest_yaml_template,
+    get_team_md_template,
+    get_personal_context_md_template,
+    get_me_md_template,
 )
 
 
@@ -50,12 +58,12 @@ def cli(ctx, output_json, quiet):
 @click.option("--strict", is_flag=True, default=True, help="Treat missing project.md as error")
 @click.option("--include-skill", "include_skills", multiple=True, help="Additionally include a skill")
 @click.option("--exclude-skill", "exclude_skills", multiple=True, help="Exclude a skill from manifest")
-@click.option("--include-sub-agent", "include_sub_agents", multiple=True, help="Additionally include a sub-agent")
-@click.option("--exclude-sub-agent", "exclude_sub_agents", multiple=True, help="Exclude a sub-agent from manifest")
+@click.option("--include-persona", "include_personas", multiple=True, help="Additionally include a persona")
+@click.option("--exclude-persona", "exclude_personas", multiple=True, help="Exclude a persona from manifest")
 @click.option("--repo", type=click.Path(exists=True), help="Explicit repo root path")
 @click.pass_context
 def compile(ctx, output_path, target, watch, no_personal, print_output, include_hash, diff, strict,
-            include_skills, exclude_skills, include_sub_agents, exclude_sub_agents, repo):
+            include_skills, exclude_skills, include_personas, exclude_personas, repo):
     """Compile agent instructions from org rules, project rules, and personal overlay."""
     try:
         # Find repo root
@@ -85,8 +93,8 @@ def compile(ctx, output_path, target, watch, no_personal, print_output, include_
         options = CompileOptions(
             include_skills=list(include_skills),
             exclude_skills=list(exclude_skills),
-            include_sub_agents=list(include_sub_agents),
-            exclude_sub_agents=list(exclude_sub_agents),
+            include_personas=list(include_personas),
+            exclude_personas=list(exclude_personas),
             no_personal=no_personal,
             include_hash=include_hash,
         )
@@ -159,12 +167,41 @@ def compile(ctx, output_path, target, watch, no_personal, print_output, include_
 def validate(ctx, repo, strict, output_json):
     """Validate repository configuration and referenced files."""
     try:
-        repo_root = find_repo_root(explicit_path=Path(repo) if repo else None)
-        if not repo_root:
-            _error("Could not find repo root. Run from inside a repository or use --repo.", ctx)
-            sys.exit(1)
+        path_to_validate = Path(repo).resolve() if repo else Path.cwd()
         
-        result = validate_repo(repo_root, strict=strict)
+        # Auto-detect context
+        context_type = "unknown"
+        result = None
+        
+        # 1. Check for Org Root
+        if (path_to_validate / ".oat-root").exists() or (path_to_validate / ".agent" / "memory" / "constitution.md").exists():
+            context_type = "org"
+            if not ctx.obj["quiet"]:
+                click.echo(f"Validating Org Root at: {path_to_validate}")
+            result = validate_org_root(path_to_validate, strict=strict)
+            
+        # 2. Check for Personal Overlay
+        elif (path_to_validate / ".agent" / "memory" / "personal-context.md").exists():
+            context_type = "personal"
+            if not ctx.obj["quiet"]:
+                click.echo(f"Validating Personal Overlay at: {path_to_validate}")
+            result = validate_personal_overlay(path_to_validate, strict=strict)
+            
+        # 3. Check for Project Repo
+        elif (path_to_validate / ".agent" / "inherits.yaml").exists() or find_repo_root(explicit_path=path_to_validate):
+            context_type = "project"
+            repo_root = find_repo_root(explicit_path=path_to_validate)
+            if not repo_root:
+                 # Should detect invalid repo if inherits.yaml exists but find_repo_root fails?
+                 repo_root = path_to_validate
+                 
+            if not ctx.obj["quiet"]:
+                click.echo(f"Validating Project Repo at: {repo_root}")
+            result = validate_repo(repo_root, strict=strict)
+            
+        else:
+            _error("Could not detect OAT context (Org, Personal, or Project). Run from a valid root.", ctx)
+            sys.exit(1)
         
         if output_json or ctx.obj["json"]:
             click.echo(json.dumps(result.to_dict(), indent=2))
@@ -226,8 +263,9 @@ def doctor(ctx, output_json):
         
         # Get configuration
         skills_config = get_skills_from_config(inherits_config)
-        sub_agents_list = get_sub_agents_from_config(inherits_config)
+        personas_list = get_personas_from_config(inherits_config)
         teams_list = get_teams_from_config(inherits_config)
+        target_agents = get_target_agents_from_config(inherits_config)
         
         # Load memory manifest
         memory_manifest = load_memory_manifest(org_root / ".agent" / "memory" / "manifest.yaml")
@@ -258,8 +296,9 @@ def doctor(ctx, output_json):
             "memory_files": [],
             "universal_skills": skills_config.get("universal", []),
             "language_skills": skills_config.get("languages", {}),
-            "sub_agents": sub_agents_list,
+            "personas": personas_list,
             "teams": teams_list,
+            "target_agents": target_agents,
             "project_rules": str(repo_root / ".agent" / "project.md") if (repo_root / ".agent" / "project.md").exists() else None,
             "personal_overlay": str(personal_overlay) if personal_overlay else None,
         }
@@ -276,10 +315,10 @@ def doctor(ctx, output_json):
             for skill_file in (org_root / ".agent" / "skills").glob("*.md"):
                 available_skills.add(skill_file.stem)
         
-        available_sub_agents = set()
-        if (org_root / ".agent" / "sub-agents").exists():
-            for sub_agent_file in (org_root / ".agent" / "sub-agents").glob("*.md"):
-                available_sub_agents.add(sub_agent_file.stem)
+        available_personas = set()
+        if (org_root / ".agent" / "personas").exists():
+            for persona_file in (org_root / ".agent" / "personas").glob("*.md"):
+                available_personas.add(persona_file.stem)
         
         included_skills = set(skills_config.get("universal", []))
         for lang_skills in skills_config.get("languages", {}).values():
@@ -287,7 +326,7 @@ def doctor(ctx, output_json):
         
         info["available_but_not_included"] = {
             "skills": sorted(available_skills - included_skills),
-            "sub_agents": sorted(available_sub_agents - set(sub_agents_list)),
+            "personas": sorted(available_personas - set(personas_list)),
         }
         
         if output_json or ctx.obj["json"]:
@@ -307,9 +346,11 @@ def doctor(ctx, output_json):
             if info["language_skills"]:
                 for lang, skills in info["language_skills"].items():
                     click.echo(f"  {lang} Skills ({len(skills)}): {', '.join(skills)}")
-            click.echo(f"  Sub-Agents ({len(info['sub_agents'])}): {', '.join(info['sub_agents'])}")
+            click.echo(f"  Personas ({len(info['personas'])}): {', '.join(info['personas'])}")
             if info["teams"]:
                 click.echo(f"  Teams: {', '.join(info['teams'])}")
+            if info["target_agents"]:
+                click.echo(f"  Target Agents: {', '.join(info['target_agents'])}")
             if info["project_rules"]:
                 click.echo(f"  Project Rules: {info['project_rules']}")
             if info["personal_overlay"]:
@@ -317,12 +358,12 @@ def doctor(ctx, output_json):
             else:
                 click.echo("  Personal Overlay: Not found")
             
-            if info["available_but_not_included"]["skills"] or info["available_but_not_included"]["sub_agents"]:
+            if info["available_but_not_included"]["skills"] or info["available_but_not_included"]["personas"]:
                 click.echo("\nAvailable but not included:")
                 if info["available_but_not_included"]["skills"]:
                     click.echo(f"  Skills: {', '.join(info['available_but_not_included']['skills'])}")
-                if info["available_but_not_included"]["sub_agents"]:
-                    click.echo(f"  Sub-Agents: {', '.join(info['available_but_not_included']['sub_agents'])}")
+                if info["available_but_not_included"]["personas"]:
+                    click.echo(f"  Personas: {', '.join(info['available_but_not_included']['personas'])}")
     
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
@@ -338,7 +379,7 @@ def init():
 @init.command("project")
 @click.option("--org-root", type=click.Path(exists=True), help="Explicit org root path")
 @click.option("--force", is_flag=True, help="Overwrite existing files")
-@click.option("--suggest", is_flag=True, help="Suggest skills/sub-agents based on project files")
+@click.option("--suggest", is_flag=True, help="Suggest skills/personas based on project files")
 @click.pass_context
 def init_project(ctx, org_root, force, suggest):
     """Initialize a project repository with agentic toolkit configuration."""
@@ -397,18 +438,18 @@ def init_project(ctx, org_root, force, suggest):
         # Replace org_root placeholder
         inherits_content = inherits_content.replace("org_root: ../..", f"org_root: {org_root_rel}")
         
-        # If suggest mode, scan project and suggest skills/sub-agents
+        # If suggest mode, scan project and suggest skills/personas
         if suggest:
-            suggestions = _suggest_skills_sub_agents(repo_root)
+            suggestions = _suggest_skills_personas(repo_root)
             if suggestions:
                 # Modify inherits_content with suggestions
                 # This is a simplified version - in practice, you'd parse YAML, modify, and re-serialize
                 if not ctx.obj["quiet"]:
-                    click.echo("\nSuggested skills/sub-agents based on project files:")
+                    click.echo("\nSuggested skills/personas based on project files:")
                     if suggestions.get("skills"):
                         click.echo(f"  Skills: {', '.join(suggestions['skills'])}")
-                    if suggestions.get("sub_agents"):
-                        click.echo(f"  Sub-Agents: {', '.join(suggestions['sub_agents'])}")
+                    if suggestions.get("personas"):
+                        click.echo(f"  Personas: {', '.join(suggestions['personas'])}")
         
         with open(inherits_yaml, "w", encoding="utf-8") as f:
             f.write(inherits_content)
@@ -430,9 +471,9 @@ def init_project(ctx, org_root, force, suggest):
         sys.exit(1)
 
 
-def _suggest_skills_sub_agents(repo_root: Path) -> dict:
-    """Suggest skills and sub-agents based on project files."""
-    suggestions = {"skills": [], "sub_agents": []}
+def _suggest_skills_personas(repo_root: Path) -> dict:
+    """Suggest skills and personas based on project files."""
+    suggestions = {"skills": [], "personas": []}
     
     # Detect languages/frameworks
     detected_langs = set()
@@ -442,14 +483,14 @@ def _suggest_skills_sub_agents(repo_root: Path) -> dict:
        (repo_root / "setup.py").exists() or list(repo_root.glob("*.py")):
         detected_langs.add("python")
         suggestions["skills"].extend(["django", "fastapi", "pytest"])
-        suggestions["sub_agents"].append("backend-developer")
+        suggestions["personas"].append("backend-developer")
     
     # Check for JavaScript/Node.js
     if (repo_root / "package.json").exists() or list(repo_root.glob("*.js")) or \
        (repo_root / "node_modules").exists():
         detected_langs.add("javascript")
         suggestions["skills"].extend(["react", "nodejs", "jest"])
-        suggestions["sub_agents"].extend(["frontend-developer", "backend-developer"])
+        suggestions["personas"].extend(["frontend-developer", "backend-developer"])
     
     # Check for TypeScript
     if (repo_root / "tsconfig.json").exists() or list(repo_root.glob("*.ts")) or \
@@ -461,30 +502,30 @@ def _suggest_skills_sub_agents(repo_root: Path) -> dict:
     if (repo_root / "go.mod").exists() or list(repo_root.glob("*.go")):
         detected_langs.add("go")
         suggestions["skills"].extend(["gin", "testing"])
-        suggestions["sub_agents"].append("backend-developer")
+        suggestions["personas"].append("backend-developer")
     
     # Check for Rust
     if (repo_root / "Cargo.toml").exists() or list(repo_root.glob("*.rs")):
         detected_langs.add("rust")
         suggestions["skills"].extend(["cargo", "testing"])
-        suggestions["sub_agents"].append("backend-developer")
+        suggestions["personas"].append("backend-developer")
     
     # Check for Java
     if (repo_root / "pom.xml").exists() or (repo_root / "build.gradle").exists() or \
        list(repo_root.glob("*.java")):
         detected_langs.add("java")
         suggestions["skills"].extend(["spring", "maven"])
-        suggestions["sub_agents"].append("backend-developer")
+        suggestions["personas"].append("backend-developer")
     
     # Always suggest universal skills
     suggestions["skills"].extend(["git", "test", "db", "review-checklist"])
     
     # Always suggest tech-lead
-    suggestions["sub_agents"].append("tech-lead")
+    suggestions["personas"].append("tech-lead")
     
     # Remove duplicates
     suggestions["skills"] = list(set(suggestions["skills"]))
-    suggestions["sub_agents"] = list(set(suggestions["sub_agents"]))
+    suggestions["personas"] = list(set(suggestions["personas"]))
     
     return suggestions
 
@@ -495,6 +536,126 @@ def _error(message: str, ctx):
         click.echo(json.dumps({"error": message}))
     else:
         click.echo(f"Error: {message}", err=True)
+
+
+@init.command("org")
+@click.option("--name", default="My Org", help="Organization name")
+@click.option("--force", is_flag=True, help="Overwrite existing files")
+@click.pass_context
+def init_org(ctx, name, force):
+    """Initialize an organization root repository."""
+    try:
+        root = Path.cwd()
+        
+        # Check if directory is empty or we are forcing
+        if any(root.iterdir()) and not force:
+            # We allow existing implementation if we are just filling in gaps, 
+            # but we should warn if it looks like a random directory
+            pass
+            
+        created = []
+        skipped = []
+        
+        def _create_file(path: Path, content: str):
+            if path.exists() and not force:
+                skipped.append(str(path))
+                return
+            
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            created.append(str(path))
+        
+        # 1. .oat-root
+        _create_file(root / ".oat-root", "")
+        
+        # 2. AGENTS.md
+        _create_file(root / "AGENTS.md", get_org_agents_md_template())
+        
+        # 3. Memory
+        _create_file(root / ".agent" / "memory" / "constitution.md", get_constitution_md_template())
+        _create_file(root / ".agent" / "memory" / "general-context.md", get_general_context_md_template())
+        _create_file(root / ".agent" / "memory" / "manifest.yaml", get_manifest_yaml_template(name))
+        
+        # 4. Teams (template)
+        _create_file(root / ".agent" / "memory" / "teams" / "_template.md", get_team_md_template("TEMPLATE"))
+        
+        # 5. Skills (dir only)
+        (root / ".agent" / "skills" / "python").mkdir(parents=True, exist_ok=True)
+        (root / ".agent" / "skills" / "javascript").mkdir(parents=True, exist_ok=True)
+        
+        # 6. Personas (dir only)
+        (root / ".agent" / "personas").mkdir(parents=True, exist_ok=True)
+        
+        # 7. Toolkit
+        (root / ".agent" / "toolkit").mkdir(parents=True, exist_ok=True)
+        # We could copy schemas here if we had them as resources
+        
+        if not ctx.obj["quiet"]:
+            click.echo(f"Initialized Org Root at {root}")
+            if created:
+                click.echo(f"Created {len(created)} files:")
+                for f in created:
+                    click.echo(f"  + {f}")
+            if skipped:
+                click.echo(f"Skipped {len(skipped)} existing files (use --force to overwrite):")
+                for f in skipped:
+                    click.echo(f"  - {f}")
+            
+            click.echo("\nConsider running: git init && git add . && git commit -m 'Initial org agentic toolkit'")
+            
+    except Exception as e:
+        _error(f"Unexpected error: {e}", ctx)
+        sys.exit(1)
+
+
+@init.command("personal")
+@click.option("--path", help="Override personal folder path")
+@click.option("--force", is_flag=True, help="Overwrite existing files")
+@click.pass_context
+def init_personal(ctx, path, force):
+    """Initialize personal overlay directory."""
+    try:
+        if path:
+            personal_path = Path(path).expanduser().resolve()
+        elif "AGENT_PERSONAL_FOLDER" in sys.modules["os"].environ:
+             personal_path = Path(sys.modules["os"].environ["AGENT_PERSONAL_FOLDER"]).expanduser().resolve()
+        else:
+            personal_path = Path.home() / ".agent"
+            
+        click.echo(f"Initializing personal overlay at: {personal_path}")
+        
+        created = []
+        skipped = []
+        
+        def _create_file(path: Path, content: str):
+            if path.exists() and not force:
+                skipped.append(str(path))
+                return
+            
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            created.append(str(path))
+            
+        # 1. Personal Memory
+        _create_file(personal_path / ".agent" / "memory" / "personal-context.md", get_personal_context_md_template())
+        
+        # 2. Personal Skills (dir only)
+        (personal_path / ".agent" / "skills").mkdir(parents=True, exist_ok=True)
+        
+        # 3. Personal Personas (me.md)
+        _create_file(personal_path / ".agent" / "personas" / "me.md", get_me_md_template())
+        
+        if not ctx.obj["quiet"]:
+            if created:
+                click.echo(f"Created {len(created)} files")
+            if skipped:
+                click.echo(f"Skipped {len(skipped)} existing files")
+                
+    except Exception as e:
+        _error(f"Unexpected error: {e}", ctx)
+        sys.exit(1)
 
 
 def main():

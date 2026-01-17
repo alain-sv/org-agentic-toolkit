@@ -12,7 +12,7 @@ from oat.config import (
     load_targets_yaml,
     validate_inherits_structure,
     get_skills_from_config,
-    get_sub_agents_from_config,
+    get_personas_from_config,
     get_teams_from_config,
     ConfigError,
 )
@@ -30,7 +30,7 @@ class TestLoadInheritsYaml:
                 "universal": ["git", "test"],
                 "languages": {"python": ["django"]}
             },
-            "sub_agents": ["backend-developer"]
+            "personas": ["backend-developer"]
         }
         inherits_path.write_text(yaml.dump(config))
         
@@ -113,7 +113,7 @@ class TestValidateInheritsStructure:
                 "universal": ["git"],
                 "languages": {"python": ["django"]}
             },
-            "sub_agents": ["backend-developer"]
+            "personas": ["backend-developer"]
         }
         
         errors = validate_inherits_structure(config)
@@ -123,7 +123,7 @@ class TestValidateInheritsStructure:
         """Test missing org_root is detected."""
         config = {
             "skills": {"universal": ["git"]},
-            "sub_agents": ["backend-developer"]
+            "personas": ["backend-developer"]
         }
         
         errors = validate_inherits_structure(config)
@@ -133,7 +133,7 @@ class TestValidateInheritsStructure:
         """Test missing skills is detected."""
         config = {
             "org_root": "../..",
-            "sub_agents": ["backend-developer"]
+            "personas": ["backend-developer"]
         }
         
         errors = validate_inherits_structure(config)
@@ -144,7 +144,7 @@ class TestValidateInheritsStructure:
         config = {
             "org_root": "/absolute/path",
             "skills": {"universal": ["git"]},
-            "sub_agents": ["backend-developer"]
+            "personas": ["backend-developer"]
         }
         
         errors = validate_inherits_structure(config)
@@ -169,16 +169,16 @@ class TestGetSkillsFromConfig:
         assert result["languages"]["javascript"] == ["react"]
 
 
-class TestGetSubAgentsFromConfig:
-    """Test extracting sub-agents from config."""
+class TestGetPersonasFromConfig:
+    """Test extracting personas from config."""
     
-    def test_get_sub_agents(self):
-        """Test extracting sub-agents."""
+    def test_get_personas(self):
+        """Test extracting personas."""
         config = {
-            "sub_agents": ["backend-developer", "frontend-developer"]
+            "personas": ["backend-developer", "frontend-developer"]
         }
         
-        result = get_sub_agents_from_config(config)
+        result = get_personas_from_config(config)
         assert result == ["backend-developer", "frontend-developer"]
 
 

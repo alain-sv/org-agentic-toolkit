@@ -1,0 +1,29 @@
+org_root: ../..
+# Required: Explicitly declare which skills are relevant for this project
+skills:
+  universal:
+    - git
+    - test
+    - db
+    - review-checklist
+  languages:
+    python:
+      - django
+      - fastapi
+      - pytest
+    javascript:
+      - react
+      - nodejs
+      - jest
+# Required: Explicitly declare which personas are relevant for this project
+personas:
+  - backend-developer
+  - frontend-developer
+  - tech-lead
+# Optional: Declare which teams are relevant (for team-specific memory)
+teams:
+  - platform
+# Optional: Declare which target agents to generate instructions for
+target_agents:
+  - cursor
+  - windsurf

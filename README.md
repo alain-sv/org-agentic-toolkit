@@ -9,7 +9,7 @@ The Org Agentic Toolkit (OAT) defines, compiles, and distributes the authoritati
 ## Features
 
 - **Single org-wide agentic constitution**: Enforce consistent rules across all projects
-- **Explicit inheritance**: Projects explicitly declare which skills and sub-agents they use
+- **Explicit inheritance**: Projects explicitly declare which skills and personas they use
 - **Personal overlays**: Optional developer-specific preferences (lowest precedence)
 - **Deterministic compilation**: Same inputs produce same output byte-for-byte
 - **IDE integration**: Output to IDE-specific configuration files (Cursor, Windsurf, etc.)
@@ -17,17 +17,26 @@ The Org Agentic Toolkit (OAT) defines, compiles, and distributes the authoritati
 
 ## Installation
 
-### From Source
+### From Source (with uv and pyproject)
 
 ```bash
 git clone <repository-url>
 cd org_agentic_toolkit
-pip install -e .
+
+# Install in editable mode using uv, based on pyproject.toml with dev dependencies
+uv pip install -e ".[dev]"
 ```
+
+> This uses [uv](https://github.com/astral-sh/uv) following dependencies declared in `pyproject.toml`, with the package installed as a [development-only dependency](https://packaging.python.org/en/latest/specifications/declaring-project-metadata/#optional-dependencies).
+
+---
+
+> **Inspiration:**  
+> This project is partly inspired by [nAItmare](https://github.com/ivanlucky22/nAItmare), an open-source repository for centralizing multi-agent standards.
 
 ### Requirements
 
-- Python 3.11+
+- Python 3.12+
 - pyyaml>=6.0
 - click>=8.0
 
@@ -49,11 +58,33 @@ oat init project --org-root ../org-agentic-toolkit
 This creates:
 - `AGENTS.md` - Entry point for agents
 - `.agent/inherits.yaml` - Project configuration
+- `AGENTS.md` - Entry point for agents
+- `.agent/inherits.yaml` - Project configuration
 - `.agent/project.md` - Project-specific rules
+
+### 2. Initialize Org Root (Optional but Recommended)
+
+To create a new organization root repository:
+
+```bash
+mkdir my-org
+cd my-org
+oat init org
+```
+
+This creates the full structure for an organization's agent rules.
+
+### 3. Initialize Personal Overlay (Optional)
+
+To create a personal overlay for your own preferences:
+
+```bash
+oat init personal
+```
 
 ### 2. Configure Your Project
 
-Edit `.agent/inherits.yaml` to specify which skills and sub-agents your project uses:
+Edit `.agent/inherits.yaml` to specify which skills and personas your project uses:
 
 ```yaml
 org_root: ../..
@@ -66,9 +97,12 @@ skills:
     python:
       - django
       - pytest
-sub_agents:
+personas:
   - backend-developer
   - tech-lead
+target_agents:
+  - cursor
+  - windsurf
 ```
 
 ### 3. Compile Agent Instructions
@@ -102,8 +136,8 @@ Compile agent instructions from org rules, project rules, and personal overlay.
 - `--diff`: Show changes since last compilation
 - `--include-skill <name>`: Additionally include a skill
 - `--exclude-skill <name>`: Exclude a skill from manifest
-- `--include-sub-agent <name>`: Additionally include a sub-agent
-- `--exclude-sub-agent <name>`: Exclude a sub-agent from manifest
+- `--include-persona <name>`: Additionally include a persona
+- `--exclude-persona <name>`: Exclude a persona from manifest
 - `--repo <path>`: Explicit repo root path
 
 **Examples:**
@@ -159,7 +193,7 @@ Output includes:
 - Entry point location
 - Constitution version
 - Memory files loaded
-- Skills and sub-agents from manifest
+- Skills and personas from manifest
 - Teams referenced
 - Project rules location
 - Personal overlay status
@@ -172,7 +206,7 @@ Initialize a project repository with agentic toolkit configuration.
 **Options:**
 - `--org-root <path>`: Explicit org root path
 - `--force`: Overwrite existing files
-- `--suggest`: Suggest skills/sub-agents based on project files
+- `--suggest`: Suggest skills/personas based on project files
 
 **Examples:**
 ```bash
@@ -185,6 +219,22 @@ oat init project --suggest
 # With explicit org root
 oat init project --org-root ../org-agentic-toolkit
 ```
+
+### `oat init org`
+
+Initialize an organization root repository.
+
+**Options:**
+- `--name <name>`: Organization name (default: "My Org")
+- `--force`: Overwrite existing files
+
+### `oat init personal`
+
+Initialize personal overlay directory.
+
+**Options:**
+- `--path <path>`: Override personal folder path
+- `--force`: Overwrite existing files
 
 ## Project Structure
 
@@ -204,7 +254,7 @@ org-agentic-toolkit/
 │   │   ├── git.md
 │   │   ├── test.md
 │   │   └── [language]/      # Language-specific skills
-│   ├── sub-agents/          # Specialized personas
+│   ├── personas/            # Specialized personas
 │   └── toolkit/             # Toolkit implementation
 └── repos/                    # Project repositories
 ```
@@ -227,7 +277,7 @@ The compiled document follows strict precedence (highest to lowest):
 2. **Org Memory** (constitution, general-context, teams)
 3. **Universal Skills** (from `inherits.yaml`, in order)
 4. **Language/Stack Skills** (grouped by language, in order)
-5. **Org Sub-Agents** (from `inherits.yaml`, in order)
+5. **Org Personas** (from `inherits.yaml`, in order)
 6. **Project Rules** (`project.md`)
 7. **Personal Overlay** (optional, lowest authority)
 
@@ -258,7 +308,7 @@ Developers can maintain personal preferences in `~/.agent/` (or path specified b
 │   └── personal-context.md
 ├── skills/
 │   └── personal-git.md
-└── sub-agents/
+└── personas/
     └── me.md  # Team membership (gitignored)
 ```
 
@@ -270,13 +320,19 @@ The validator checks:
 
 - `AGENTS.md` exists (warning if missing)
 - `.agent/inherits.yaml` exists and is valid (error if missing)
-- `skills` and `sub_agents` sections exist (error if missing)
+- `skills` and `personas` sections exist (error if missing)
 - `org_root` resolves and contains constitution
 - All referenced skills exist
-- All referenced sub-agents exist
+- All referenced personas exist
 - All referenced teams exist
 - `.agent/project.md` exists (error in strict mode, warning otherwise)
+- `.agent/project.md` exists (error in strict mode, warning otherwise)
 - No forbidden constructs (absolute paths, etc.)
+
+Validation automatically detects the context:
+- **Org Root**: Checks `.oat-root`, constitution, manifest, etc.
+- **Personal Overlay**: Checks personal context, me.md
+- **Project Repo**: Checks inherits.yaml and inheritance
 
 ## Examples
 
@@ -295,11 +351,13 @@ skills:
     python:
       - django
       - pytest
-sub_agents:
+personas:
   - backend-developer
   - tech-lead
 teams:
   - platform
+target_agents:
+  - cursor
 ```
 
 ### Example: Full-Stack JavaScript Project
@@ -316,7 +374,7 @@ skills:
       - react
       - nodejs
       - jest
-sub_agents:
+personas:
   - frontend-developer
   - backend-developer
   - tech-lead
