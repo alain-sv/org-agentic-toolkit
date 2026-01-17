@@ -278,10 +278,20 @@ def compile(
                 with open(output_path, "r", encoding="utf-8") as f:
                     old_content = f.read()
                 # Remove critical notice for comparison
-                if old_content.startswith("> CRITICAL: Read AGENTS.md first.\n\n"):
+                if old_content.startswith(
+                    "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
+                ):
                     old_content = old_content[
-                        len("> CRITICAL: Read AGENTS.md first.\n\n") :
+                        len("> CRITICAL: Read AGENTS.compiled.md first.\n\n") :
                     ]
+                # Also check for TOC
+                if old_content.startswith("## Table of Contents"):
+                    # Find where TOC ends (usually after a blank line and before content)
+                    toc_end = old_content.find(
+                        "\n\n", old_content.find("## Table of Contents")
+                    )
+                    if toc_end != -1:
+                        old_content = old_content[toc_end + 2 :]
                 # Simple diff - just show if different
                 if old_content != compiled:
                     if not ctx.obj["quiet"]:
@@ -303,10 +313,14 @@ def compile(
             click.echo(compiled)
         else:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            # Write with critical notice
-            critical_notice = "> CRITICAL: Read AGENTS.md first.\n\n"
+            # Write with critical notice and table of contents
+            critical_notice = "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
+            toc = _generate_table_of_contents(compiled)
             with open(output_path, "w", encoding="utf-8") as f:
-                f.write(critical_notice + compiled)
+                f.write(critical_notice)
+                if toc:
+                    f.write(toc + "\n\n")
+                f.write(compiled)
             if not ctx.obj["quiet"]:
                 click.echo(f"Compiled to: {output_path}")
 
@@ -339,10 +353,16 @@ def compile(
                             # Create parent directories if needed (e.g., .github/, .qoder/)
                             target_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-                            # Write file with critical notice
-                            critical_notice = "> CRITICAL: Read AGENTS.md first.\n\n"
+                            # Write file with critical notice and table of contents
+                            critical_notice = (
+                                "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
+                            )
+                            toc = _generate_table_of_contents(compiled)
                             with open(target_file_path, "w", encoding="utf-8") as f:
-                                f.write(critical_notice + compiled)
+                                f.write(critical_notice)
+                                if toc:
+                                    f.write(toc + "\n\n")
+                                f.write(compiled)
 
                             created_targets.append(target_file_path)
                             if not ctx.obj["quiet"]:
@@ -930,6 +950,58 @@ def _error(message: str, ctx):
         click.echo(json.dumps({"error": message}))
     else:
         click.echo(f"Error: {message}", err=True)
+
+
+def _generate_table_of_contents(content: str) -> str:
+    """
+    Generate a table of contents from markdown headers in the content.
+    Uses GitHub-style anchor generation.
+
+    Args:
+        content: Markdown content to extract headers from
+
+    Returns:
+        Table of contents as markdown, or empty string if no headers found
+    """
+    import re
+
+    lines = []
+    headers = []
+
+    # Extract headers (##, ###, ####, etc.)
+    for line in content.split("\n"):
+        # Match markdown headers (## Header or ### Header)
+        match = re.match(r"^(#{2,6})\s+(.+)$", line)
+        if match:
+            level = len(match.group(1))  # Number of # characters
+            header_text = match.group(2).strip()
+            # Create GitHub-style anchor from header text
+            # GitHub anchors: lowercase, replace spaces with hyphens, remove special chars
+            anchor = header_text.lower()
+            # Remove markdown links and images: [text](url) or ![alt](url)
+            anchor = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", anchor)
+            anchor = re.sub(r"!\[([^\]]+)\]\([^\)]+\)", r"\1", anchor)
+            # Remove special characters except spaces and hyphens
+            anchor = re.sub(r"[^\w\s-]", "", anchor)
+            # Replace spaces and multiple hyphens with single hyphen
+            anchor = re.sub(r"[-\s]+", "-", anchor)
+            anchor = anchor.strip("-")
+            headers.append((level, header_text, anchor))
+
+    if not headers:
+        return ""
+
+    # Generate TOC
+    lines.append("## Table of Contents")
+    lines.append("")
+
+    for level, header_text, anchor in headers:
+        indent = "  " * (
+            level - 2
+        )  # Indent based on header level (## = 0, ### = 2, etc.)
+        lines.append(f"{indent}- [{header_text}](#{anchor})")
+
+    return "\n".join(lines)
 
 
 def _find_file_in_locations(
