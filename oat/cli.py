@@ -770,6 +770,8 @@ def setup(ctx):
 def _run_setup(ctx):
     """Refactored setup logic shared between setup command and init_project."""
     try:
+        import questionary
+        
         repo_root = find_repo_root()
         if not repo_root:
             _error("Could not find repo root. Run from inside a repository.", ctx)
@@ -781,19 +783,15 @@ def _run_setup(ctx):
             try:
                 current_config = load_inherits_yaml(inherits_path)
             except ConfigError:
-                # If invalid, start fresh or just warn?
                 if not ctx.obj["quiet"]:
                     click.echo("Warning: Existing inherits.yaml is invalid. Starting fresh.")
         
         # Determine org root
-        # If config exists, try to use it
         org_root_path = None
         if "org_root" in current_config:
-             # resolve relative path
              org_root_path = (repo_root / ".agent" / current_config["org_root"]).resolve()
         
         if not org_root_path or not org_root_path.exists():
-            # Try to find org root by walking up
             current = repo_root.parent
             while current != current.parent:
                 if (current / ".oat-root").exists() or (current / ".agent" / "memory" / "constitution.md").exists():
@@ -805,7 +803,6 @@ def _run_setup(ctx):
              _error("Could not find Organization Root. Please run 'oat init project --org-root <path>' first to link.", ctx)
              sys.exit(1)
              
-        # Compute relative path for storage
         try:
             org_root_rel = str(Path(org_root_path).relative_to(repo_root))
         except ValueError:
@@ -814,88 +811,103 @@ def _run_setup(ctx):
         # Get available options
         options = _get_available_options(org_root_path)
         
-        # Prepare current selections
-        # We need to support "adding" to existing or "replacing". 
-        # Standard wizard behavior usually "reviews" current state.
-        
+        # Prepare defaults from current config
         current_skills = current_config.get("skills", {}).get("universal", [])
         current_personas = current_config.get("personas", [])
         current_team = current_config.get("teams", [None])[0] if current_config.get("teams") else None
         current_targets = current_config.get("target_agents", ["cursor", "windsurf"])
+        current_lang_skills = current_config.get("skills", {}).get("languages", {})
         
-        # Interaction Loop
         click.echo(f"\nConfiguring Project at: {repo_root}")
         click.echo(f"Linked Org Root: {org_root_path}")
         
         # 1. TEAM
         if options["teams"]:
-            click.echo("\n--- Team Selection ---")
-            click.echo(f"Current Team: {current_team if current_team else 'None'}")
-            if click.confirm("Change Team?", default=False):
-                click.echo("Available Teams:")
-                for i, t in enumerate(options["teams"], 1):
-                    click.echo(f"  {i}. {t}")
-                click.echo("  0. None")
-                choice = click.prompt("Select Team (number)", type=int, default=0)
-                if choice == 0:
-                    current_team = None
-                elif 0 < choice <= len(options["teams"]):
-                    current_team = options["teams"][choice-1]
+            team_choices = ["None"] + options["teams"]
+            default_team = current_team if current_team in options["teams"] else "None"
+            
+            selected_team = questionary.select(
+                "Select Team:",
+                choices=team_choices,
+                default=default_team
+            ).ask()
+            
+            if selected_team == "None":
+                current_team = None
+            else:
+                current_team = selected_team
         
         # 2. UNIVERSAL SKILLS
         if options["skills"]:
-            click.echo("\n--- Universal Skills ---")
-            click.echo(f"Current: {', '.join(current_skills)}")
-            if click.confirm("Update Universal Skills?", default=False):
-                 click.echo(f"Available: {', '.join(options['skills'])}")
-                 skills_in = click.prompt("Enter Universal Skills (comma-separated, empty to keep current)", default="", show_default=False)
-                 if skills_in.strip():
-                     current_skills = [s.strip() for s in skills_in.split(",") if s.strip()]
-        
+            # Pre-select based on current config
+            choices = []
+            for skill in options["skills"]:
+                choices.append(questionary.Choice(skill, checked=(skill in current_skills)))
+            
+            current_skills = questionary.checkbox(
+                "Select Universal Skills:",
+                choices=choices
+            ).ask()
+            
         # 3. LANGUAGES & SKILLS
-        current_lang_skills = current_config.get("skills", {}).get("languages", {})
         all_langs = sorted(list(set([k for k in options if k not in ["teams", "skills", "personas"]])))
-        detected = _detect_languages(repo_root)
+        detected = _detect_languages(repo_root) # set of detected languages
         
         if all_langs:
-            click.echo("\n--- Language Skills ---")
+            # First, ask which languages to configure
+            # Default to detected + currently configured
+            lang_choices = []
             for lang in all_langs:
+                checked = (lang in detected) or (lang in current_lang_skills)
+                lang_choices.append(questionary.Choice(lang, checked=checked))
+                
+            selected_langs = questionary.checkbox(
+                "Select Languages to configure:",
+                choices=lang_choices
+            ).ask()
+            
+            # Now for each selected language, pick skills
+            new_lang_skills = {}
+            for lang in selected_langs:
                 available = options[lang]
                 if not available: continue
                 
                 curr = current_lang_skills.get(lang, [])
-                is_detected = lang in detected
-                has_current = bool(curr)
+                skill_choices = []
+                for s in available:
+                    skill_choices.append(questionary.Choice(s, checked=(s in curr)))
                 
-                # If we have current skills, or it's detected, or user explicitly wants to add
-                if has_current or is_detected or click.confirm(f"Configure {lang} skills?", default=False):
-                    click.echo(f"  [{lang}] Current: {', '.join(curr)}")
-                    if click.confirm(f"  Update {lang} skills?", default=False):
-                        click.echo(f"  Available: {', '.join(available)}")
-                        l_skills_in = click.prompt(f"  Enter {lang} skills (comma-separated)", default="")
-                        if l_skills_in.strip():
-                            current_lang_skills[lang] = [s.strip() for s in l_skills_in.split(",") if s.strip()]
-                        elif click.confirm(f"  Clear all {lang} skills?", default=False):
-                             if lang in current_lang_skills:
-                                 del current_lang_skills[lang]
-        
+                chosen = questionary.checkbox(
+                    f"Select {lang} Skills:",
+                    choices=skill_choices
+                ).ask()
+                
+                if chosen:
+                    new_lang_skills[lang] = chosen
+            
+            current_lang_skills = new_lang_skills
+
         # 4. PERSONAS
         if options["personas"]:
-            click.echo("\n--- Personas ---")
-            click.echo(f"Current: {', '.join(current_personas)}")
-            if click.confirm("Update Personas?", default=False):
-                 click.echo(f"Available: {', '.join(options['personas'])}")
-                 personas_in = click.prompt("Enter Personas (comma-separated)", default="", show_default=False)
-                 if personas_in.strip():
-                     current_personas = [p.strip() for p in personas_in.split(",") if p.strip()]
+            persona_choices = []
+            for p in options["personas"]:
+                persona_choices.append(questionary.Choice(p, checked=(p in current_personas)))
+                
+            current_personas = questionary.checkbox(
+                "Select Personas:",
+                choices=persona_choices
+            ).ask()
 
         # 5. TARGET AGENTS
-        click.echo("\n--- Target Agents ---")
-        click.echo(f"Current: {', '.join(current_targets)}")
-        if click.confirm("Update Target Agents?", default=False):
-             targets_in = click.prompt("Enter Target Agents (comma-separated)", default="cursor, windsurf")
-             if targets_in.strip():
-                 current_targets = [t.strip() for t in targets_in.split(",") if t.strip()]
+        target_choices = [
+            questionary.Choice("cursor", checked=("cursor" in current_targets)),
+            questionary.Choice("windsurf", checked=("windsurf" in current_targets))
+        ]
+        
+        current_targets = questionary.checkbox(
+            "Select Target Agents:",
+            choices=target_choices
+        ).ask()
 
         # SAVE
         new_config = {
@@ -917,6 +929,9 @@ def _run_setup(ctx):
         if not ctx.obj["quiet"]:
             click.echo(f"\nConfiguration saved to {inherits_yaml}")
 
+    except ImportError:
+        _error("Module 'questionary' not found. Please reinstall org-agentic-toolkit.", ctx)
+        sys.exit(1)
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
         sys.exit(1)

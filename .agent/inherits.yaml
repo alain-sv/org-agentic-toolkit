@@ -1,4 +1,4 @@
-org_root: /Volumes/SSDext1TB/Documents/GitRepo/ALAIN_SV
+org_root: temp_test_org
 # Required: Explicitly declare which skills are relevant for this project
 skills:
   universal:
