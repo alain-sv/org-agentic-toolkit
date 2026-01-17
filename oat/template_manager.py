@@ -48,11 +48,6 @@ def get_project_md_template() -> str:
     return _read_template(TEMPLATE_FILES["PROJECT_MD"])
 
 
-def get_org_agents_md_template() -> str:
-    """Get the template for org root AGENTS.md."""
-    return _read_template(TEMPLATE_FILES["AGENTS_ORG_MD"])
-
-
 def get_constitution_md_template() -> str:
     """Get the template for constitution.md."""
     return _read_template(TEMPLATE_FILES["CONSTITUTION_MD"])

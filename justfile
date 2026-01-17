@@ -17,3 +17,10 @@ clean:
 # Run validation on the current repo
 validate:
     oat validate
+
+####
+# Development
+####    
+
+install_tool:
+    uv tool install --editable .

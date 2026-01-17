@@ -25,7 +25,6 @@ from oat.template_manager import (
     get_agents_md_template,
     get_inherits_yaml_template,
     get_project_md_template,
-    get_org_agents_md_template,
     get_constitution_md_template,
     get_general_context_md_template,
     get_manifest_yaml_template,
@@ -423,6 +422,81 @@ def init_project(ctx, org_root, force, suggest):
             # If not relative, use absolute path (will be caught by validator)
             org_root_rel = str(org_root_path)
         
+        # Prepare selections
+        selected_team = None
+        selected_skills = []
+        selected_personas = []
+        selected_lang_skills = {}
+        target_agents = ["cursor", "windsurf"] # Default targets
+        
+        # Suggestion mode
+        if suggest:
+             suggestions = _suggest_skills_personas(repo_root)
+             if suggestions:
+                 if not ctx.obj["quiet"]:
+                     click.echo("\nSuggested configuration based on project files:")
+                     if suggestions.get("skills"):
+                         click.echo(f"  Skills: {', '.join(suggestions['skills'])}")
+                     if suggestions.get("personas"):
+                         click.echo(f"  Personas: {', '.join(suggestions['personas'])}")
+                 
+                 selected_skills = suggestions.get("skills", [])
+                 selected_personas = suggestions.get("personas", [])
+        
+        # Interactive mode (if not suggest and strictly interactive)
+        elif sys.stdin.isatty():
+             if not ctx.obj["quiet"]:
+                 click.echo(f"\nScanning Org Root at {org_root_path}...")
+             
+             options = _get_available_options(org_root_path)
+             
+             # Prompt Team
+             if options["teams"]:
+                 click.echo("\nAvailable Teams:")
+                 for i, t in enumerate(options["teams"], 1):
+                     click.echo(f"  {i}. {t}")
+                 click.echo("  0. None")
+                 choice = click.prompt("Select Team (number)", type=int, default=0)
+                 if 0 < choice <= len(options["teams"]):
+                     selected_team = options["teams"][choice-1]
+            
+             # Prompt Universal Skills
+             if options["skills"]:
+                 click.echo("\nAvailable Universal Skills:")
+                 # Pre-select some common ones if available
+                 defaults = [s for s in ["git", "test", "db"] if s in options["skills"]]
+                 default_str = ", ".join(defaults)
+                 
+                 click.echo(f"  (Available: {', '.join(options['skills'])})")
+                 skills_in = click.prompt("Enter Universal Skills (comma-separated)", default=default_str)
+                 if skills_in.strip():
+                     selected_skills = [s.strip() for s in skills_in.split(",") if s.strip()]
+            
+             # Prompt Language Skills
+             all_langs = sorted(list(set([k for k in options if k not in ["teams", "skills", "personas"]])))
+             # Heuristic: Detect language to filter?
+             detected = _detect_languages(repo_root)
+             
+             for lang in all_langs:
+                 lang_skills = options[lang]
+                 if not lang_skills: continue
+                 
+                 # Only prompt if detected or user wants to see all?
+                 # Let's prompt for relevant languages
+                 if lang in detected or click.confirm(f"\nInclude {lang} skills?", default=(lang in detected)):
+                     click.echo(f"Available {lang} skills: {', '.join(lang_skills)}")
+                     l_skills_in = click.prompt(f"Enter {lang} skills (comma-separated)", default="")
+                     if l_skills_in.strip():
+                         selected_lang_skills[lang] = [s.strip() for s in l_skills_in.split(",") if s.strip()]
+
+             # Prompt Personas
+             if options["personas"]:
+                 click.echo("\nAvailable Personas:")
+                 click.echo(f"  (Available: {', '.join(options['personas'])})")
+                 personas_in = click.prompt("Enter Personas (comma-separated)", default="tech-lead")
+                 if personas_in.strip():
+                     selected_personas = [p.strip() for p in personas_in.split(",") if p.strip()]
+        
         # Create .agent directory
         (repo_root / ".agent").mkdir(exist_ok=True)
         
@@ -435,24 +509,40 @@ def init_project(ctx, org_root, force, suggest):
         
         # Create inherits.yaml
         inherits_content = get_inherits_yaml_template()
-        # Replace org_root placeholder
+        
+        # Do simple replacement for org_root
         inherits_content = inherits_content.replace("org_root: ../..", f"org_root: {org_root_rel}")
         
-        # If suggest mode, scan project and suggest skills/personas
-        if suggest:
-            suggestions = _suggest_skills_personas(repo_root)
-            if suggestions:
-                # Modify inherits_content with suggestions
-                # This is a simplified version - in practice, you'd parse YAML, modify, and re-serialize
-                if not ctx.obj["quiet"]:
-                    click.echo("\nSuggested skills/personas based on project files:")
-                    if suggestions.get("skills"):
-                        click.echo(f"  Skills: {', '.join(suggestions['skills'])}")
-                    if suggestions.get("personas"):
-                        click.echo(f"  Personas: {', '.join(suggestions['personas'])}")
-        
-        with open(inherits_yaml, "w", encoding="utf-8") as f:
-            f.write(inherits_content)
+        # If we have selections, we should construct the YAML or replace sections
+        # For robustness, let's use a simple YAML dump if we have selections, otherwise template defaults
+        if selected_skills or selected_personas or selected_team or selected_lang_skills:
+            # Construct dictionary
+            config = {
+                "org_root": org_root_rel,
+                "skills": {
+                    "universal": selected_skills,
+                    "languages": selected_lang_skills
+                },
+                "personas": selected_personas,
+                "target_agents": target_agents
+            }
+            if selected_team:
+                config["teams"] = [selected_team] # Specification says list?
+            
+            # Simple YAML dumper to preserve order/format is hard without ruamel.yaml
+            # But we can try to be neat.
+            import yaml
+            # To avoid weird yaml tags/flow style, we construct string manually or use safe_dump
+            # Let's use string construction for better comments/formatting control if we care, 
+            # or just dump it.
+            # Using yaml.safe_dump is safest for validity.
+            with open(inherits_yaml, "w", encoding="utf-8") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        else:
+            # Use template default
+            with open(inherits_yaml, "w", encoding="utf-8") as f:
+                f.write(inherits_content)
+
         if not ctx.obj["quiet"]:
             click.echo(f"Created: {inherits_yaml}")
         
@@ -468,7 +558,77 @@ def init_project(ctx, org_root, force, suggest):
     
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
+        # import traceback
+        # traceback.print_exc()
         sys.exit(1)
+
+
+def _get_available_options(org_root: Path) -> dict:
+    """Scan org root for available skills, personas, and teams."""
+    options = {
+        "skills": [],
+        "personas": [],
+        "teams": []
+    }
+    
+    # Scan Universal Skills
+    skills_dir = org_root / ".agent" / "skills"
+    if skills_dir.exists():
+        for f in skills_dir.glob("*.md"):
+            options["skills"].append(f.stem)
+        
+        # Scan Language Skills
+        for d in skills_dir.iterdir():
+            if d.is_dir():
+                lang_skills = [f.stem for f in d.glob("*.md")]
+                if lang_skills:
+                    options[d.name] = lang_skills
+    
+    # Scan Personas
+    personas_dir = org_root / ".agent" / "personas"
+    if personas_dir.exists():
+        for f in personas_dir.glob("*.md"):
+            options["personas"].append(f.stem)
+            
+    # Scan Teams
+    teams_dir = org_root / ".agent" / "memory" / "teams"
+    if teams_dir.exists():
+        for f in teams_dir.glob("*.md"):
+            if f.stem != "_template":
+                options["teams"].append(f.stem)
+    
+    # Sort everything
+    for k in options:
+        options[k].sort()
+        
+    return options
+
+def _detect_languages(repo_root: Path) -> set:
+    """Detect main languages in the repo."""
+    langs = set()
+    if (repo_root / "requirements.txt").exists() or (repo_root / "pyproject.toml").exists() or \
+       (repo_root / "setup.py").exists() or list(repo_root.glob("*.py")):
+        langs.add("python")
+    
+    if (repo_root / "package.json").exists() or list(repo_root.glob("*.js")) or \
+       (repo_root / "node_modules").exists():
+        langs.add("javascript")
+        
+    if (repo_root / "tsconfig.json").exists() or list(repo_root.glob("*.ts")) or \
+       list(repo_root.glob("*.tsx")):
+        langs.add("typescript")
+    
+    if (repo_root / "go.mod").exists() or list(repo_root.glob("*.go")):
+        langs.add("go")
+        
+    if (repo_root / "Cargo.toml").exists() or list(repo_root.glob("*.rs")):
+        langs.add("rust")
+        
+    if (repo_root / "pom.xml").exists() or (repo_root / "build.gradle").exists() or \
+       list(repo_root.glob("*.java")):
+        langs.add("java")
+        
+    return langs
 
 
 def _suggest_skills_personas(repo_root: Path) -> dict:
@@ -569,10 +729,7 @@ def init_org(ctx, name, force):
         # 1. .oat-root
         _create_file(root / ".oat-root", "")
         
-        # 2. AGENTS.md
-        _create_file(root / "AGENTS.md", get_org_agents_md_template())
-        
-        # 3. Memory
+        # 2. Memory (Constitution, etc.)
         _create_file(root / ".agent" / "memory" / "constitution.md", get_constitution_md_template())
         _create_file(root / ".agent" / "memory" / "general-context.md", get_general_context_md_template())
         _create_file(root / ".agent" / "memory" / "manifest.yaml", get_manifest_yaml_template(name))
@@ -638,6 +795,12 @@ def init_personal(ctx, path, force):
                 f.write(content)
             created.append(str(path))
             
+        if not ctx.obj["quiet"]:
+            if created:
+                click.echo(f"Created {len(created)} files")
+            if skipped:
+                click.echo(f"Skipped {len(skipped)} existing files")
+        
         # 1. Personal Memory
         _create_file(personal_path / ".agent" / "memory" / "personal-context.md", get_personal_context_md_template())
         
@@ -645,13 +808,34 @@ def init_personal(ctx, path, force):
         (personal_path / ".agent" / "skills").mkdir(parents=True, exist_ok=True)
         
         # 3. Personal Personas (me.md)
-        _create_file(personal_path / ".agent" / "personas" / "me.md", get_me_md_template())
+        me_content = get_me_md_template()
         
-        if not ctx.obj["quiet"]:
-            if created:
-                click.echo(f"Created {len(created)} files")
-            if skipped:
-                click.echo(f"Skipped {len(skipped)} existing files")
+        # Interactive prompt for team if not provided (and not force? force doesn't imply defaults, just overwrite)
+        # We only prompt if we are creating the file or if we want to update it? 
+        # For simplicity, let's prompt if we are creating it or overwriting it.
+        if (not (personal_path / ".agent" / "personas" / "me.md").exists()) or force:
+             team = ""
+             if sys.stdin.isatty():
+                 team = click.prompt("Enter your team name (optional)", default="", show_default=False)
+             
+             if team:
+                 # Replace placeholder or add field
+                 # The template currently has "team: []" or similar?
+                 # Let's assume we want to inject it. 
+                 # If template is simple, we might just replace a placeholder like "[TEAM_NAME]" if existed, 
+                 # but based on previous view it was a static template.
+                 # Let's check template content first? 
+                 # For now, let's assume we replace "team: []" with "team: [team_name]" or similar logic.
+                 # Actually, better to just append or replace.
+                 if "team: []" in me_content:
+                     me_content = me_content.replace("team: []", f"team: [{team}]")
+                 elif "team:" in me_content:
+                     # Regex replace might be better but let's stick to simple replacement if possible
+                     import re
+                     me_content = re.sub(r"team: \[.*\]", f"team: [{team}]", me_content)
+
+        _create_file(personal_path / ".agent" / "personas" / "me.md", me_content)
+
                 
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
