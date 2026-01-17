@@ -14,6 +14,16 @@ coverage:
 clean:
     rm -rf build/ dist/ *.egg-info .pytest_cache .coverage htmlcov
 
+# Build package for publishing
+build:
+    python -m pip install --upgrade build
+    python -m build
+
+# Publish to PyPI using twine
+publish: build
+    python -m pip install --upgrade twine
+    python -m twine upload dist/*
+
 # Run validation on the current repo
 validate:
     oat validate

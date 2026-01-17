@@ -421,82 +421,7 @@ def init_project(ctx, org_root, force, suggest):
         except ValueError:
             # If not relative, use absolute path (will be caught by validator)
             org_root_rel = str(org_root_path)
-        
-        # Prepare selections
-        selected_team = None
-        selected_skills = []
-        selected_personas = []
-        selected_lang_skills = {}
-        target_agents = ["cursor", "windsurf"] # Default targets
-        
-        # Suggestion mode
-        if suggest:
-             suggestions = _suggest_skills_personas(repo_root)
-             if suggestions:
-                 if not ctx.obj["quiet"]:
-                     click.echo("\nSuggested configuration based on project files:")
-                     if suggestions.get("skills"):
-                         click.echo(f"  Skills: {', '.join(suggestions['skills'])}")
-                     if suggestions.get("personas"):
-                         click.echo(f"  Personas: {', '.join(suggestions['personas'])}")
-                 
-                 selected_skills = suggestions.get("skills", [])
-                 selected_personas = suggestions.get("personas", [])
-        
-        # Interactive mode (if not suggest and strictly interactive)
-        elif sys.stdin.isatty():
-             if not ctx.obj["quiet"]:
-                 click.echo(f"\nScanning Org Root at {org_root_path}...")
-             
-             options = _get_available_options(org_root_path)
-             
-             # Prompt Team
-             if options["teams"]:
-                 click.echo("\nAvailable Teams:")
-                 for i, t in enumerate(options["teams"], 1):
-                     click.echo(f"  {i}. {t}")
-                 click.echo("  0. None")
-                 choice = click.prompt("Select Team (number)", type=int, default=0)
-                 if 0 < choice <= len(options["teams"]):
-                     selected_team = options["teams"][choice-1]
             
-             # Prompt Universal Skills
-             if options["skills"]:
-                 click.echo("\nAvailable Universal Skills:")
-                 # Pre-select some common ones if available
-                 defaults = [s for s in ["git", "test", "db"] if s in options["skills"]]
-                 default_str = ", ".join(defaults)
-                 
-                 click.echo(f"  (Available: {', '.join(options['skills'])})")
-                 skills_in = click.prompt("Enter Universal Skills (comma-separated)", default=default_str)
-                 if skills_in.strip():
-                     selected_skills = [s.strip() for s in skills_in.split(",") if s.strip()]
-            
-             # Prompt Language Skills
-             all_langs = sorted(list(set([k for k in options if k not in ["teams", "skills", "personas"]])))
-             # Heuristic: Detect language to filter?
-             detected = _detect_languages(repo_root)
-             
-             for lang in all_langs:
-                 lang_skills = options[lang]
-                 if not lang_skills: continue
-                 
-                 # Only prompt if detected or user wants to see all?
-                 # Let's prompt for relevant languages
-                 if lang in detected or click.confirm(f"\nInclude {lang} skills?", default=(lang in detected)):
-                     click.echo(f"Available {lang} skills: {', '.join(lang_skills)}")
-                     l_skills_in = click.prompt(f"Enter {lang} skills (comma-separated)", default="")
-                     if l_skills_in.strip():
-                         selected_lang_skills[lang] = [s.strip() for s in l_skills_in.split(",") if s.strip()]
-
-             # Prompt Personas
-             if options["personas"]:
-                 click.echo("\nAvailable Personas:")
-                 click.echo(f"  (Available: {', '.join(options['personas'])})")
-                 personas_in = click.prompt("Enter Personas (comma-separated)", default="tech-lead")
-                 if personas_in.strip():
-                     selected_personas = [p.strip() for p in personas_in.split(",") if p.strip()]
-        
         # Create .agent directory
         (repo_root / ".agent").mkdir(exist_ok=True)
         
@@ -507,39 +432,33 @@ def init_project(ctx, org_root, force, suggest):
         if not ctx.obj["quiet"]:
             click.echo(f"Created: {agents_md}")
         
-        # Create inherits.yaml
+        # Create inherits.yaml (default for now)
         inherits_content = get_inherits_yaml_template()
-        
-        # Do simple replacement for org_root
         inherits_content = inherits_content.replace("org_root: ../..", f"org_root: {org_root_rel}")
         
-        # If we have selections, we should construct the YAML or replace sections
-        # For robustness, let's use a simple YAML dump if we have selections, otherwise template defaults
-        if selected_skills or selected_personas or selected_team or selected_lang_skills:
-            # Construct dictionary
-            config = {
-                "org_root": org_root_rel,
-                "skills": {
-                    "universal": selected_skills,
-                    "languages": selected_lang_skills
-                },
-                "personas": selected_personas,
-                "target_agents": target_agents
-            }
-            if selected_team:
-                config["teams"] = [selected_team] # Specification says list?
-            
-            # Simple YAML dumper to preserve order/format is hard without ruamel.yaml
-            # But we can try to be neat.
-            import yaml
-            # To avoid weird yaml tags/flow style, we construct string manually or use safe_dump
-            # Let's use string construction for better comments/formatting control if we care, 
-            # or just dump it.
-            # Using yaml.safe_dump is safest for validity.
-            with open(inherits_yaml, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        # Suggestion mode - we can use this to pre-fill?
+        # Actually, let's just create the file with defaults, then call setup if interactive
+        # If suggest is True, we might want to pass that to setup? 
+        # But setup doesn't take suggestion flag yet.
+        # Let's simplify: init creates files, then setup configures them.
+        
+        if suggest:
+             # Pre-fill
+             suggestions = _suggest_skills_personas(repo_root)
+             if suggestions:
+                 config = {
+                    "org_root": org_root_rel,
+                    "skills": {
+                        "universal": suggestions.get("skills", []),
+                        "languages": {} # Todo: auto-detect languages for suggestions?
+                    },
+                    "personas": suggestions.get("personas", []),
+                    "target_agents": ["cursor", "windsurf"]
+                 }
+                 import yaml
+                 with open(inherits_yaml, "w", encoding="utf-8") as f:
+                    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         else:
-            # Use template default
             with open(inherits_yaml, "w", encoding="utf-8") as f:
                 f.write(inherits_content)
 
@@ -555,11 +474,10 @@ def init_project(ctx, org_root, force, suggest):
         
         if not ctx.obj["quiet"]:
             click.echo("\nProject initialized successfully!")
+            click.echo("\nRun 'oat setup' to configure your project interactively.")
     
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
-        # import traceback
-        # traceback.print_exc()
         sys.exit(1)
 
 
@@ -837,6 +755,168 @@ def init_personal(ctx, path, force):
         _create_file(personal_path / ".agent" / "personas" / "me.md", me_content)
 
                 
+    except Exception as e:
+        _error(f"Unexpected error: {e}", ctx)
+        sys.exit(1)
+
+
+@cli.command()
+@click.pass_context
+def setup(ctx):
+    """Interactive setup for project configuration."""
+    _run_setup(ctx)
+
+
+def _run_setup(ctx):
+    """Refactored setup logic shared between setup command and init_project."""
+    try:
+        repo_root = find_repo_root()
+        if not repo_root:
+            _error("Could not find repo root. Run from inside a repository.", ctx)
+            sys.exit(1)
+        
+        inherits_path = repo_root / ".agent" / "inherits.yaml"
+        current_config = {}
+        if inherits_path.exists():
+            try:
+                current_config = load_inherits_yaml(inherits_path)
+            except ConfigError:
+                # If invalid, start fresh or just warn?
+                if not ctx.obj["quiet"]:
+                    click.echo("Warning: Existing inherits.yaml is invalid. Starting fresh.")
+        
+        # Determine org root
+        # If config exists, try to use it
+        org_root_path = None
+        if "org_root" in current_config:
+             # resolve relative path
+             org_root_path = (repo_root / ".agent" / current_config["org_root"]).resolve()
+        
+        if not org_root_path or not org_root_path.exists():
+            # Try to find org root by walking up
+            current = repo_root.parent
+            while current != current.parent:
+                if (current / ".oat-root").exists() or (current / ".agent" / "memory" / "constitution.md").exists():
+                    org_root_path = current
+                    break
+                current = current.parent
+        
+        if not org_root_path:
+             _error("Could not find Organization Root. Please run 'oat init project --org-root <path>' first to link.", ctx)
+             sys.exit(1)
+             
+        # Compute relative path for storage
+        try:
+            org_root_rel = str(Path(org_root_path).relative_to(repo_root))
+        except ValueError:
+            org_root_rel = str(org_root_path)
+
+        # Get available options
+        options = _get_available_options(org_root_path)
+        
+        # Prepare current selections
+        # We need to support "adding" to existing or "replacing". 
+        # Standard wizard behavior usually "reviews" current state.
+        
+        current_skills = current_config.get("skills", {}).get("universal", [])
+        current_personas = current_config.get("personas", [])
+        current_team = current_config.get("teams", [None])[0] if current_config.get("teams") else None
+        current_targets = current_config.get("target_agents", ["cursor", "windsurf"])
+        
+        # Interaction Loop
+        click.echo(f"\nConfiguring Project at: {repo_root}")
+        click.echo(f"Linked Org Root: {org_root_path}")
+        
+        # 1. TEAM
+        if options["teams"]:
+            click.echo("\n--- Team Selection ---")
+            click.echo(f"Current Team: {current_team if current_team else 'None'}")
+            if click.confirm("Change Team?", default=False):
+                click.echo("Available Teams:")
+                for i, t in enumerate(options["teams"], 1):
+                    click.echo(f"  {i}. {t}")
+                click.echo("  0. None")
+                choice = click.prompt("Select Team (number)", type=int, default=0)
+                if choice == 0:
+                    current_team = None
+                elif 0 < choice <= len(options["teams"]):
+                    current_team = options["teams"][choice-1]
+        
+        # 2. UNIVERSAL SKILLS
+        if options["skills"]:
+            click.echo("\n--- Universal Skills ---")
+            click.echo(f"Current: {', '.join(current_skills)}")
+            if click.confirm("Update Universal Skills?", default=False):
+                 click.echo(f"Available: {', '.join(options['skills'])}")
+                 skills_in = click.prompt("Enter Universal Skills (comma-separated, empty to keep current)", default="", show_default=False)
+                 if skills_in.strip():
+                     current_skills = [s.strip() for s in skills_in.split(",") if s.strip()]
+        
+        # 3. LANGUAGES & SKILLS
+        current_lang_skills = current_config.get("skills", {}).get("languages", {})
+        all_langs = sorted(list(set([k for k in options if k not in ["teams", "skills", "personas"]])))
+        detected = _detect_languages(repo_root)
+        
+        if all_langs:
+            click.echo("\n--- Language Skills ---")
+            for lang in all_langs:
+                available = options[lang]
+                if not available: continue
+                
+                curr = current_lang_skills.get(lang, [])
+                is_detected = lang in detected
+                has_current = bool(curr)
+                
+                # If we have current skills, or it's detected, or user explicitly wants to add
+                if has_current or is_detected or click.confirm(f"Configure {lang} skills?", default=False):
+                    click.echo(f"  [{lang}] Current: {', '.join(curr)}")
+                    if click.confirm(f"  Update {lang} skills?", default=False):
+                        click.echo(f"  Available: {', '.join(available)}")
+                        l_skills_in = click.prompt(f"  Enter {lang} skills (comma-separated)", default="")
+                        if l_skills_in.strip():
+                            current_lang_skills[lang] = [s.strip() for s in l_skills_in.split(",") if s.strip()]
+                        elif click.confirm(f"  Clear all {lang} skills?", default=False):
+                             if lang in current_lang_skills:
+                                 del current_lang_skills[lang]
+        
+        # 4. PERSONAS
+        if options["personas"]:
+            click.echo("\n--- Personas ---")
+            click.echo(f"Current: {', '.join(current_personas)}")
+            if click.confirm("Update Personas?", default=False):
+                 click.echo(f"Available: {', '.join(options['personas'])}")
+                 personas_in = click.prompt("Enter Personas (comma-separated)", default="", show_default=False)
+                 if personas_in.strip():
+                     current_personas = [p.strip() for p in personas_in.split(",") if p.strip()]
+
+        # 5. TARGET AGENTS
+        click.echo("\n--- Target Agents ---")
+        click.echo(f"Current: {', '.join(current_targets)}")
+        if click.confirm("Update Target Agents?", default=False):
+             targets_in = click.prompt("Enter Target Agents (comma-separated)", default="cursor, windsurf")
+             if targets_in.strip():
+                 current_targets = [t.strip() for t in targets_in.split(",") if t.strip()]
+
+        # SAVE
+        new_config = {
+            "org_root": org_root_rel,
+            "skills": {
+                "universal": current_skills,
+                "languages": current_lang_skills
+            },
+            "personas": current_personas,
+            "target_agents": current_targets
+        }
+        if current_team:
+            new_config["teams"] = [current_team]
+
+        import yaml
+        with open(inherits_yaml, "w", encoding="utf-8") as f:
+            yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
+            
+        if not ctx.obj["quiet"]:
+            click.echo(f"\nConfiguration saved to {inherits_yaml}")
+
     except Exception as e:
         _error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
