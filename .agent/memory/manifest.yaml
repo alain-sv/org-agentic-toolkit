@@ -1,0 +1,7 @@
+name: supervaize
+version: 1.0.0
+constitution: constitution.md
+general-context: general-context.md
+teams:
+  - platform
+  - product

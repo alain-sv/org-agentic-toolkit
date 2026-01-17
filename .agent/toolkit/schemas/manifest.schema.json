@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Memory Manifest Schema",
+  "description": "Schema for .agent/memory/manifest.yaml",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Organization name"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?(\\+[a-zA-Z0-9]+)?$",
+      "description": "SemVer version"
+    },
+    "constitution": {
+      "type": "string",
+      "description": "Path to constitution file (relative to memory directory)"
+    },
+    "general-context": {
+      "type": "string",
+      "description": "Path to general context file (relative to memory directory)"
+    },
+    "teams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of team file names (without .md extension)"
+    }
+  },
+  "required": ["name", "version", "constitution"]
+}

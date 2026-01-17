@@ -1,0 +1,32 @@
+# IDE Target Mappings
+# Maps target names to IDE-specific configuration file paths
+
+targets:
+  cursor:
+    path: .cursorrules
+    description: Cursor IDE rules file
+  
+  vscode:
+    path: .vscode/settings.json
+    section: "// Agent Rules"
+    description: VS Code settings file (agent rules section)
+  
+  jetbrains:
+    path: .idea/codeStyles/codeStyleConfig.xml
+    description: JetBrains IDE code style configuration
+  
+  copilot:
+    path: .github/copilot-instructions.md
+    description: GitHub Copilot instructions file
+  
+  cody:
+    path: .codyrules
+    description: Sourcegraph Cody rules file
+  
+  aider:
+    path: .aiderignore
+    description: Aider AI coding assistant ignore file
+  
+  default:
+    path: .agent-compiled.md
+    description: Default compiled markdown output file

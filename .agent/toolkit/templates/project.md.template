@@ -1,0 +1,39 @@
+# Project Rules
+
+This document contains project-specific rules and exceptions to the organization constitution.
+
+## Project Overview
+
+[Brief description of the project]
+
+## Project-Specific Standards
+
+### Technology Stack
+- [List project-specific technologies]
+
+### Code Conventions
+- [Project-specific coding standards]
+
+### Testing Requirements
+- [Project-specific testing requirements]
+
+## Exceptions to Constitution
+
+Any exceptions to the organization constitution must be documented here with rationale:
+
+### Exception 1: [Title]
+- **Rationale**: [Why this exception is needed]
+- **Ticket Reference**: [Link to ticket/issue]
+- **Approved By**: [Tech lead name]
+- **Date**: [Date of approval]
+
+## Project-Specific Context
+
+### Key Concepts
+- [Project-specific domain knowledge]
+
+### Common Patterns
+- [Project-specific patterns]
+
+### Related Projects
+- [Links to related projects or dependencies]

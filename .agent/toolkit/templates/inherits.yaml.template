@@ -1,0 +1,28 @@
+# Inherits Configuration
+# Defines which skills, sub-agents, and teams to inherit from the org root
+
+org_root: ../..  # Relative path to org root (adjust as needed)
+
+skills:
+  universal:
+    - git
+    - test
+    - db
+    - review-checklist
+  
+  languages:
+    python:
+      - django
+    javascript:
+      - react
+
+sub_agents:
+  - backend-developer
+  - frontend-developer
+  - tech-lead
+  - qa
+  - devops
+
+teams:
+  # Add team names from org root memory/manifest.yaml
+  # Example: - platform

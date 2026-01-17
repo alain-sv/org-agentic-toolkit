@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Inherits Configuration Schema",
+  "description": "Schema for .agent/inherits.yaml",
+  "type": "object",
+  "properties": {
+    "org_root": {
+      "type": "string",
+      "description": "Relative path from repo root to org root",
+      "pattern": "^(?!\\/).*",
+      "not": {
+        "pattern": "^\\/"
+      }
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "universal": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of universal skill names (without .md extension)"
+        },
+        "languages": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Map of language/stack names to lists of skill names"
+        }
+      },
+      "required": ["universal"],
+      "additionalProperties": false
+    },
+    "sub_agents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of sub-agent names (without .md extension)"
+    },
+    "teams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of team names (without .md extension)"
+    }
+  },
+  "required": ["org_root", "skills", "sub_agents"],
+  "additionalProperties": false
+}
