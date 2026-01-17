@@ -923,11 +923,12 @@ def _run_setup(ctx):
             new_config["teams"] = [current_team]
 
         import yaml
-        with open(inherits_yaml, "w", encoding="utf-8") as f:
+        import yaml
+        with open(inherits_path, "w", encoding="utf-8") as f:
             yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
             
         if not ctx.obj["quiet"]:
-            click.echo(f"\nConfiguration saved to {inherits_yaml}")
+            click.echo(f"\nConfiguration saved to {inherits_path}")
 
     except ImportError:
         _error("Module 'questionary' not found. Please reinstall org-agentic-toolkit.", ctx)

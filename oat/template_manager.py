@@ -13,7 +13,7 @@ TEMPLATE_FILES = {
     "CONSTITUTION_MD": "memory/constitution.md",
     "GENERAL_CONTEXT_MD": "memory/general-context.md",
     "MANIFEST_YAML": "memory/manifest.yaml",
-    "TEAM_MD": "memory/teams/_template.md",
+    "TEAM_MD": "teams/_template.md",
     "PERSONAL_CONTEXT_MD": "memory/personal-context.md",
     "ME_MD": "personas/me.md",
 }
