@@ -392,16 +392,17 @@ pytest
 
 ```
 org_agentic_toolkit/
-├── oat/              # Main package
-│   ├── cli.py        # CLI commands
-│   ├── discovery.py  # Root discovery
-│   ├── config.py     # YAML loading
-│   ├── compiler.py   # Compilation engine
-│   ├── validator.py  # Validation logic
-│   └── templates.py  # Templates
-├── tests/            # Test suite
-├── .agent/           # Example org root
-└── pyproject.toml    # Package config
+├── oat/                 # Main package
+│   ├── cli.py           # CLI commands
+│   ├── discovery.py     # Root discovery
+│   ├── config.py        # YAML loading
+│   ├── compiler.py      # Compilation engine
+│   ├── validator.py     # Validation logic
+│   ├── template_manager.py # Template manager
+│   └── templates/       # Template files (package data)
+├── tests/               # Test suite
+├── pyproject.toml       # Package config
+└── MANIFEST.in          # Package data config
 ```
 
 ## License
