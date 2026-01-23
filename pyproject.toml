@@ -44,3 +44,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.bumpversion]
+current_version = "1.0.0"
+
+[tool.bumpversion.file:pyproject.toml]
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
