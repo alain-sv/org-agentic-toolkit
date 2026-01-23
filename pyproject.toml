@@ -47,11 +47,13 @@ python_functions = ["test_*"]
 
 [tool.bumpversion]
 current_version = "1.0.0"
+commit = true
+tag = true
+tag_name = "v{new_version}"                                 # Format of the tag name (default is "v{new_version}")
+tag_message = "Release {new_version}"                       # Message for the tag
+message = "Bump version: {current_version} → {new_version}"
 
 [[tool.bumpversion.files]]
 filename = "pyproject.toml"
-search = 'version = "{current_version}"'
-replace = 'version = "{new_version}"'
-serialize = [
-  "{major}.{minor}.{patch}"
-]
+search   = 'version = "{current_version}"'
+replace  = 'version = "{new_version}"'

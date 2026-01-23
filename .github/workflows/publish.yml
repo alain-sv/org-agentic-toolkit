@@ -62,7 +62,7 @@ jobs:
         run: |
           git config --global user.name 'github-actions'
           git config --global user.email 'github-actions@github.com'
-          # Detect current version from pyproject.toml
+          # Detect current version from pyproject.toml (authoritative for search)
           OLD_VERSION=$(grep '^version =' pyproject.toml | cut -d '"' -f2)
           export OLD_VERSION
           # Expose for downstream steps
