@@ -1,6 +1,6 @@
 """Org Agentic Toolkit (OAT) - Governance infrastructure for organization-level agent rules."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "Alain Prasquier [alain-sv](https://github.com/alain-sv/)"
 
 from oat.discovery import (

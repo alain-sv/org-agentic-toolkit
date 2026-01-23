@@ -45,3 +45,19 @@ validate:
 
 install_tool:
     uv tool install --editable .
+
+####
+# Version bumping
+####
+
+# Bump patch version (1.0.0 -> 1.0.1)
+bump-patch:
+    uv tool run bump-my-version bump patch --config-file pyproject.toml
+
+# Bump minor version (1.0.0 -> 1.1.0)
+bump-minor:
+    uv tool run bump-my-version bump minor --config-file pyproject.toml
+
+# Bump major version (1.0.0 -> 2.0.0)
+bump-major:
+    uv tool run bump-my-version bump major --config-file pyproject.toml

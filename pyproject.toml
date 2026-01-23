@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "org-agentic-toolkit"
-version = "1.0.0"
+version = "1.0.1"
 description = "Governance infrastructure that compiles and validates organization-level agent rules"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,7 +46,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.bumpversion]
-current_version = "1.0.0"
+current_version = "1.0.1"
 commit = true
 tag = true
 tag_name = "v{new_version}"                                 # Format of the tag name (default is "v{new_version}")
@@ -59,5 +59,15 @@ serialize = ["{major}.{minor}.{patch}"]
 filename = "oat/__init__.py"
 search   = '__version__ = "{current_version}"'
 replace  = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search   = 'version = "{current_version}"'
+replace  = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search   = 'current_version = "{current_version}"'
+replace  = 'current_version = "{new_version}"'
 
 
