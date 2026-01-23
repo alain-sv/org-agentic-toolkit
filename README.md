@@ -6,6 +6,13 @@ Governance infrastructure that compiles and validates **organization-level agent
 
 The Org Agentic Toolkit (OAT) defines, compiles, and distributes the authoritative agent rules for all projects within an organization. It ensures every project inherits org rules by construction, allows optional personal overlays without weakening org authority, and produces deterministic, auditable agent instructions.
 
+---
+
+> **Inspiration:**  
+> This project is partly inspired by [nAItmare](https://github.com/ivanlucky22/nAItmare), an open-source repository for centralizing multi-agent standards.
+
+---
+
 ## Features
 
 - **Single org-wide agentic constitution**: Enforce consistent rules across all projects
@@ -29,23 +36,6 @@ uv pip install -e ".[dev]"
 
 > This uses [uv](https://github.com/astral-sh/uv) following dependencies declared in `pyproject.toml`, with the package installed as a [development-only dependency](https://packaging.python.org/en/latest/specifications/declaring-project-metadata/#optional-dependencies).
 
----
-
-> **Inspiration:**  
-> This project is partly inspired by [nAItmare](https://github.com/ivanlucky22/nAItmare), an open-source repository for centralizing multi-agent standards.
-
-### Requirements
-
-- Python 3.12+
-- pyyaml>=6.0
-- click>=8.0
-
-Optional dependencies (for development):
-- pytest>=9.0.0
-- pytest-cov>=7.0.0
-- jsonschema>=4.0.0 (for schema validation)
-- watchdog>=6.0.0 (for watch mode)
-
 ## Quick Start
 
 ### 1. Initialize a Project
@@ -56,6 +46,7 @@ oat init project --org-root ../org-agentic-toolkit
 ```
 
 This creates:
+
 - `AGENTS.md` - Entry point for agents
 - `.agent/inherits.yaml` - Project configuration
 - `AGENTS.md` - Entry point for agents
@@ -75,6 +66,7 @@ oat init org
 This creates the full structure for an organization's agent rules, including a `.oat-root` marker file.
 
 **Organization Root Discovery:**
+
 - The `.oat-root` file is the **primary indicator** for an organization root
 - OAT automatically discovers org roots by walking up the directory tree looking for `.oat-root`
 - If `.oat-root` is not found, it falls back to checking for `.agent/memory/constitution.md`
@@ -134,6 +126,7 @@ Checks that all referenced files exist and configuration is valid.
 Compile agent instructions from org rules, project rules, and personal overlay.
 
 **Options:**
+
 - `--out <path>`: Override output path (default: `AGENTS.compiled.md`)
 - `--target <name>`: Compile for specific IDE (e.g., `cursor`, `windsurf`)
 - `--no-personal`: Ignore personal overlay
@@ -147,6 +140,7 @@ Compile agent instructions from org rules, project rules, and personal overlay.
 - `--repo <path>`: Explicit repo root path
 
 **Examples:**
+
 ```bash
 # Basic compilation
 oat compile
@@ -166,11 +160,13 @@ oat compile --print
 Validate repository configuration and referenced files.
 
 **Options:**
+
 - `--repo <path>`: Explicit repo root path
 - `--strict`: Treat warnings as errors
 - `--json`: Output JSON format
 
 **Examples:**
+
 ```bash
 # Basic validation
 oat validate
@@ -187,14 +183,17 @@ oat validate --json
 Show diagnostic information about the current repository configuration.
 
 **Options:**
+
 - `--json`: Output JSON format
 
 **Example:**
+
 ```bash
 oat doctor
 ```
 
 Output includes:
+
 - Repo root and org root paths
 - Entry point location
 - Constitution version
@@ -210,11 +209,13 @@ Output includes:
 Initialize a project repository with agentic toolkit configuration.
 
 **Options:**
+
 - `--org-root <path>`: Explicit org root path
 - `--force`: Overwrite existing files
 - `--suggest`: Suggest skills/personas based on project files
 
 **Examples:**
+
 ```bash
 # Basic initialization
 oat init project
@@ -231,6 +232,7 @@ oat init project --org-root ../org-agentic-toolkit
 Initialize an organization root repository.
 
 **Options:**
+
 - `--name <name>`: Organization name (default: "My Org")
 - `--force`: Overwrite existing files
 
@@ -239,6 +241,7 @@ Initialize an organization root repository.
 Initialize personal overlay directory.
 
 **Options:**
+
 - `--path <path>`: Override personal folder path
 - `--force`: Overwrite existing files
 
@@ -336,6 +339,7 @@ The validator checks:
 - No forbidden constructs (absolute paths, etc.)
 
 Validation automatically detects the context:
+
 - **Org Root**: Checks `.oat-root`, constitution, manifest, etc.
 - **Personal Overlay**: Checks personal context, me.md
 - **Project Repo**: Checks inherits.yaml and inheritance
@@ -345,6 +349,7 @@ Validation automatically detects the context:
 ### Example: Python Django Project
 
 `.agent/inherits.yaml`:
+
 ```yaml
 org_root: ../..
 skills:
@@ -369,6 +374,7 @@ target_agents:
 ### Example: Full-Stack JavaScript Project
 
 `.agent/inherits.yaml`:
+
 ```yaml
 org_root: ../..
 skills:
@@ -417,4 +423,11 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please read the contributing guidelines and submit pull requests.
+Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute, including:
+
+- Development setup and installation
+- Code style and testing guidelines
+- How to submit pull requests
+- Project structure and workflow
+
+We appreciate all contributions, whether they're bug fixes, new features, documentation improvements, or other enhancements.
