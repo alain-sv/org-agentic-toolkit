@@ -32,7 +32,7 @@ jobs:
 
       - name: Install bump-my-version
         run: |
-          uv tool install --force bump-my-version==1.2.2
+          uv tool install bump-my-version
 
       - name: Determine version bump type
         id: version-bump-type

@@ -52,8 +52,12 @@ tag = true
 tag_name = "v{new_version}"                                 # Format of the tag name (default is "v{new_version}")
 tag_message = "Release {new_version}"                       # Message for the tag
 message = "Bump version: {current_version} → {new_version}"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
 
 [[tool.bumpversion.files]]
-filename = "pyproject.toml"
-search   = 'version = "{current_version}"'
-replace  = 'version = "{new_version}"'
+filename = "oat/__init__.py"
+search   = '__version__ = "{current_version}"'
+replace  = '__version__ = "{new_version}"'
+
+
