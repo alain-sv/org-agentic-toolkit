@@ -52,3 +52,6 @@ current_version = "1.0.0"
 filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
+serialize = [
+  "{major}.{minor}.{patch}"
+]

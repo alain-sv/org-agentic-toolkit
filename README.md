@@ -38,24 +38,9 @@ uv pip install -e ".[dev]"
 
 ## Quick Start
 
-### 1. Initialize a Project
+### 1. Initialize Organization Root
 
-```bash
-cd your-project
-oat init project --org-root ../org-agentic-toolkit
-```
-
-This creates:
-
-- `AGENTS.md` - Entry point for agents
-- `.agent/inherits.yaml` - Project configuration
-- `AGENTS.md` - Entry point for agents
-- `.agent/inherits.yaml` - Project configuration
-- `.agent/project.md` - Project-specific rules
-
-### 2. Initialize Org Root (Optional but Recommended)
-
-To create a new organization root repository:
+First, create your organization's constitution documents:
 
 ```bash
 mkdir my-org
@@ -63,29 +48,46 @@ cd my-org
 oat init org
 ```
 
-This creates the full structure for an organization's agent rules, including a `.oat-root` marker file.
+This creates the full structure for an organization's agent rules, including:
+- `.oat-root` - Discovery marker file
+- `.agent/memory/constitution.md` - Organization constitution
+- `.agent/memory/general-context.md` - General context
+- `.agent/memory/manifest.yaml` - Memory manifest
+- Directory structure for skills, personas, and teams
+
+### 2. Initialize Projects
+
+Then, initialize each project to reference the organization:
+
+```bash
+cd your-project
+oat init project --org-root ../my-org
+```
+
+If the org root is in a parent directory, OAT will auto-detect it:
+
+```bash
+cd your-project
+oat init project
+```
+
+This creates:
+- `AGENTS.md` - Entry point for agents
+- `.agent/inherits.yaml` - Project configuration (references org root)
+- `.agent/project.md` - Project-specific rules
 
 **Organization Root Discovery:**
 
-- The `.oat-root` file is the **primary indicator** for an organization root
 - OAT automatically discovers org roots by walking up the directory tree looking for `.oat-root`
 - If `.oat-root` is not found, it falls back to checking for `.agent/memory/constitution.md`
 - You can also specify the org root path in `.agent/inherits.yaml` or via the `OAT_ROOT` environment variable
 
-### 3. Initialize Personal Overlay (Optional)
-
-To create a personal overlay for your own preferences:
-
-```bash
-oat init personal
-```
-
-### 2. Configure Your Project
+### 3. Configure Your Project
 
 Edit `.agent/inherits.yaml` to specify which skills and personas your project uses:
 
 ```yaml
-org_root: ../..
+org_root: ../my-org
 skills:
   universal:
     - git
@@ -103,7 +105,7 @@ target_agents:
   - windsurf
 ```
 
-### 3. Compile Agent Instructions
+### 4. Compile Agent Instructions
 
 ```bash
 oat compile
@@ -111,13 +113,23 @@ oat compile
 
 This produces `AGENTS.compiled.md` with all rules merged in the correct precedence order.
 
-### 4. Validate Configuration
+### 5. Validate Configuration
 
 ```bash
 oat validate
 ```
 
 Checks that all referenced files exist and configuration is valid.
+
+### Optional: Personal Preferences
+
+To create a personal overlay for your own preferences:
+
+```bash
+oat init personal
+```
+
+Personal overlays have the lowest precedence and cannot override org rules.
 
 ## CLI Commands
 
