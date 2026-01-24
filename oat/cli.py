@@ -1195,10 +1195,29 @@ def _generate_compile_summary(
     else:
         lines.append(f"  ○ General Context: {general_context_path} (optional)")
 
+    # Teams (from inherits.yaml or personal overlay)
+    teams_to_check = teams_list.copy()
+    
+    # Check personal overlay for team context if not specified in inherits.yaml
+    if not teams_to_check and not options.no_personal and personal_overlay:
+        me_path = personal_overlay / "personas" / "me.md"
+        if me_path.exists():
+            try:
+                me_content = me_path.read_text(encoding="utf-8")
+                # Try to extract team from me.md (format: "team: [TEAM_NAME]")
+                for line in me_content.split("\n"):
+                    if line.strip().startswith("team:"):
+                        team_name = line.split(":", 1)[1].strip().strip("[]")
+                        if team_name:
+                            teams_to_check = [team_name]
+                            break
+            except Exception:
+                pass  # Ignore errors reading me.md in summary
+    
     # Teams
-    if teams_list:
+    if teams_to_check:
         lines.append("\nTeams:")
-        for team_name in teams_list:
+        for team_name in teams_to_check:
             file_path = f"memory/teams/{team_name}.md"
             found_path, locations = _find_file_in_locations(
                 file_path, personal_overlay, org_root, repo_root

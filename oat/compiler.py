@@ -169,13 +169,10 @@ def compile_document(
         sources.append(("Org General Context", general_context_path, content))
         metadata["memory_files"].append("general-context.md")
     
-    # Teams (from manifest or inherits.yaml)
+    # Teams (from inherits.yaml or personal overlay)
     teams_to_load = teams_list
-    if not teams_to_load and memory_manifest:
-        # Try to get teams from manifest if not in inherits.yaml
-        teams_to_load = memory_manifest.get("teams", [])
     
-    # Also check personal overlay for team context
+    # Check personal overlay for team context if not specified in inherits.yaml
     if not teams_to_load and not options.no_personal and personal_overlay:
         me_path = personal_overlay / "personas" / "me.md"
         if me_path.exists():
