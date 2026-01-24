@@ -93,6 +93,11 @@ def cli(ctx, output_json, quiet):
 )
 @click.option("--repo", type=click.Path(exists=True), help="Explicit repo root path")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--rules-mode",
+    type=click.Choice(["copy", "link"], case_sensitive=False),
+    help="Rules inclusion mode: 'copy' (copy all rules) or 'link' (point to AGENTS.compiled.md)",
+)
 @click.pass_context
 def compile(
     ctx,
@@ -110,6 +115,7 @@ def compile(
     exclude_personas,
     repo,
     force,
+    rules_mode,
 ):
     """Compile agent instructions from org rules, project rules, and personal overlay."""
     try:
@@ -218,6 +224,25 @@ def compile(
                 click.echo("\nUse --force to attempt compilation anyway (will fail).")
                 sys.exit(1)
 
+        # Prompt for rules mode if not provided
+        if rules_mode is None and not ctx.obj["quiet"] and sys.stdin.isatty():
+            click.echo("\nRules inclusion mode for target files:")
+            click.echo("  copy = copy all rules into target files(default)")
+            click.echo("  link = target files only point to AGENTS.compiled.md")
+            rules_mode = click.prompt(
+                "Select mode",
+                type=click.Choice(["copy", "link"], case_sensitive=False),
+                default="copy",
+                show_choices=True,
+                show_default=True,
+            )
+        elif rules_mode is None:
+            # Default to "copy" if not interactive
+            rules_mode = "copy"
+
+        # Normalize to lowercase
+        rules_mode = rules_mode.lower() if rules_mode else "copy"
+
         # Ask for confirmation unless --force is used
         if not force and not ctx.obj["quiet"] and sys.stdin.isatty():
             if not click.confirm("\nProceed with compilation?", default=True):
@@ -277,12 +302,25 @@ def compile(
             if output_path.exists():
                 with open(output_path, "r", encoding="utf-8") as f:
                     old_content = f.read()
+                # Remove maintenance comment for comparison
+                maintenance_comment = (
+                    "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
+                )
+                if old_content.startswith(maintenance_comment):
+                    old_content = old_content[len(maintenance_comment) :]
                 # Remove critical notice for comparison
                 if old_content.startswith(
                     "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
                 ):
                     old_content = old_content[
                         len("> CRITICAL: Read AGENTS.compiled.md first.\n\n") :
+                    ]
+                elif old_content.startswith(
+                    "> CRITICAL: Read AGENTS.compiled.md first.\n"
+                ):
+                    # For link mode files
+                    old_content = old_content[
+                        len("> CRITICAL: Read AGENTS.compiled.md first.\n") :
                     ]
                 # Also check for TOC
                 if old_content.startswith("## Table of Contents"):
@@ -312,17 +350,43 @@ def compile(
         if print_output:
             click.echo(compiled)
         else:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            # Write with critical notice and table of contents
+            # Maintenance comment for all generated files
+            maintenance_comment = (
+                "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
+            )
+            
+            # Always write AGENTS.compiled.md with full content
+            agents_compiled_path = repo_root / "AGENTS.compiled.md"
+            agents_compiled_path.parent.mkdir(parents=True, exist_ok=True)
             critical_notice = "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
             toc = _generate_table_of_contents(compiled)
-            with open(output_path, "w", encoding="utf-8") as f:
+            with open(agents_compiled_path, "w", encoding="utf-8") as f:
+                f.write(maintenance_comment)
                 f.write(critical_notice)
                 if toc:
                     f.write(toc + "\n\n")
                 f.write(compiled)
             if not ctx.obj["quiet"]:
-                click.echo(f"Compiled to: {output_path}")
+                click.echo(f"Compiled to: {agents_compiled_path}")
+
+            # Write to output_path (target file or custom path) based on rules_mode
+            if output_path != agents_compiled_path:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                if rules_mode == "link":
+                    # Link mode: target files only contain the critical notice
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(maintenance_comment)
+                        f.write("> CRITICAL: Read AGENTS.compiled.md first.\n")
+                else:
+                    # Copy mode: write full content without critical notice
+                    toc = _generate_table_of_contents(compiled)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(maintenance_comment)
+                        if toc:
+                            f.write(toc + "\n\n")
+                        f.write(compiled)
+                if not ctx.obj["quiet"]:
+                    click.echo(f"Created target file: {output_path}")
 
         # Create target agent files based on target_agents in inherits.yaml
         # Only create if not using --target (which already writes to a specific file)
@@ -347,22 +411,31 @@ def compile(
                     )
 
                     created_targets = []
+                    # Maintenance comment for all generated files
+                    maintenance_comment = (
+                        "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
+                    )
+                    
                     for agent_name in target_agents:
                         if agent_name in template_targets:
                             target_file_path = repo_root / template_targets[agent_name]
                             # Create parent directories if needed (e.g., .github/, .qoder/)
                             target_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-                            # Write file with critical notice and table of contents
-                            critical_notice = (
-                                "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
-                            )
-                            toc = _generate_table_of_contents(compiled)
-                            with open(target_file_path, "w", encoding="utf-8") as f:
-                                f.write(critical_notice)
-                                if toc:
-                                    f.write(toc + "\n\n")
-                                f.write(compiled)
+                            # Write file based on rules_mode
+                            if rules_mode == "link":
+                                # Link mode: only write the critical notice
+                                with open(target_file_path, "w", encoding="utf-8") as f:
+                                    f.write(maintenance_comment)
+                                    f.write("> CRITICAL: Read AGENTS.compiled.md first.\n")
+                            else:
+                                # Copy mode: write full content without critical notice
+                                toc = _generate_table_of_contents(compiled)
+                                with open(target_file_path, "w", encoding="utf-8") as f:
+                                    f.write(maintenance_comment)
+                                    if toc:
+                                        f.write(toc + "\n\n")
+                                    f.write(compiled)
 
                             created_targets.append(target_file_path)
                             if not ctx.obj["quiet"]:
