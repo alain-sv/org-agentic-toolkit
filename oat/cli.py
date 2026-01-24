@@ -3,11 +3,15 @@
 import json
 import sys
 from pathlib import Path
-from typing import Tuple
 
 import click
 
 from oat import __version__
+from oat.constants import (
+    MAINTENANCE_COMMENT,
+    CRITICAL_NOTICE_WITH_NL,
+    CRITICAL_NOTICE_WITHOUT_NL,
+)
 from oat.discovery import (
     find_repo_root,
     find_org_root,
@@ -28,6 +32,7 @@ from oat.compiler import compile_document, CompileOptions, CompileError
 from oat.validator import validate_repo, validate_org_root, validate_personal_overlay
 from oat.template_manager import (
     get_agents_md_template,
+    get_agents_org_md_template,
     get_inherits_yaml_template,
     get_project_md_template,
     get_constitution_md_template,
@@ -36,6 +41,25 @@ from oat.template_manager import (
     get_team_md_template,
     get_personal_context_md_template,
     get_me_md_template,
+)
+from oat.cli_helpers.output import error, generate_table_of_contents
+from oat.cli_helpers.file_creation import (
+    parse_missing_file,
+    determine_file_type_and_path,
+    get_template_content,
+    create_missing_file,
+    offer_create_missing_files,
+)
+from oat.cli_helpers.compile_summary import (
+    find_file_in_locations,
+    generate_compile_summary,
+)
+from oat.cli_helpers.setup_sync import (
+    get_available_options,
+    detect_languages,
+    suggest_skills_personas,
+    run_setup,
+    sync_from_template as sync_from_template_helper,
 )
 
 
@@ -51,301 +75,6 @@ def cli(ctx, output_json, quiet):
     ctx.ensure_object(dict)
     ctx.obj["json"] = output_json
     ctx.obj["quiet"] = quiet
-
-
-def _parse_missing_file(missing_line: str) -> dict:
-    """
-    Parse missing file information from summary line.
-    
-    Args:
-        missing_line: Line like "❌ MISSING: {name}" or "❌ MISSING: {type}: {path}"
-    
-    Returns:
-        Dict with file_type, name, and relative_path
-    """
-    # Remove the ❌ MISSING: prefix
-    content = missing_line.replace("❌ MISSING:", "").strip()
-    
-    # Check for different patterns
-    if "/" in content and not content.startswith("/") and ":" not in content:
-        # Language skill: "python/django" (not a path, just language/skill)
-        parts = content.split("/", 1)
-        return {
-            "file_type": "language_skill",
-            "name": parts[1],
-            "language": parts[0],
-            "relative_path": f"skills/{parts[0]}/{parts[1]}.md"
-        }
-    elif content.startswith("Constitution:"):
-        # Constitution: /path/to/constitution.md
-        return {
-            "file_type": "constitution",
-            "name": "constitution",
-            "relative_path": "memory/constitution.md"
-        }
-    else:
-        # Extract name - remove path if present
-        if ":" in content:
-            # Format: "Type: /path/to/file" or just "name"
-            parts = content.split(":", 1)
-            name = parts[-1].strip()
-            # Remove path if it's a full path
-            if "/" in name:
-                # Extract just the filename without extension
-                name = Path(name).stem
-        else:
-            name = content.strip()
-        
-        # Determine type based on where it appears in summary
-        if name.lower() in ["constitution", "constitution.md"]:
-            return {
-                "file_type": "constitution",
-                "name": "constitution",
-                "relative_path": "memory/constitution.md"
-            }
-        else:
-            # Default: assume it's a team, skill, or persona
-            # We'll need to check all possible locations
-            return {
-                "file_type": "unknown",
-                "name": name,
-                "relative_path": None  # Will be determined by checking all locations
-            }
-
-
-def _determine_file_type_and_path(name: str, repo_root: Path, org_root: Path, personal_overlay, teams_list: list, skills_list: list, personas_list: list) -> dict:
-    """
-    Determine file type and relative path for a missing file.
-    
-    Returns:
-        Dict with file_type and relative_path
-    """
-    # Check if it's a team
-    if name in teams_list:
-        return {
-            "file_type": "team",
-            "relative_path": f"memory/teams/{name}.md"
-        }
-    
-    # Check if it's a universal skill
-    if name in skills_list:
-        return {
-            "file_type": "universal_skill",
-            "relative_path": f"skills/{name}.md"
-        }
-    
-    # Check if it's a persona
-    if name in personas_list:
-        return {
-            "file_type": "persona",
-            "relative_path": f"personas/{name}.md"
-        }
-    
-    # Default: assume team (most common case)
-    return {
-        "file_type": "team",
-        "relative_path": f"memory/teams/{name}.md"
-    }
-
-
-def _get_template_content(file_type: str, name: str = None, language: str = None) -> Tuple[str, bool]:
-    """
-    Get template content for a file type, or return placeholder.
-    
-    Args:
-        file_type: Type of file (team, skill, persona, etc.)
-        name: Name of the file (for teams, personas)
-        language: Language for language skills
-    
-    Returns:
-        Tuple of (content, is_placeholder)
-    """
-    try:
-        if file_type == "team" and name:
-            return get_team_md_template(name), False
-        elif file_type == "constitution":
-            return get_constitution_md_template(), False
-        elif file_type == "general_context":
-            return get_general_context_md_template(), False
-        elif file_type == "project":
-            return get_project_md_template(), False
-        elif file_type == "personal_context":
-            return get_personal_context_md_template(), False
-        elif file_type == "me":
-            return get_me_md_template(), False
-        else:
-            # Create placeholder
-            if file_type == "team" and name:
-                placeholder = f"# Team: {name}\n\n## Mission\n\n[Describe the team's mission]\n\n## Responsibilities\n\n- [Responsibility 1]\n- [Responsibility 2]\n\n## Key Contacts\n\n- Tech Lead: [Name]\n- Product Owner: [Name]\n"
-            elif file_type == "universal_skill" and name:
-                placeholder = f"# Skill: {name}\n\n[Describe the {name} skill and how it should be used]\n"
-            elif file_type == "language_skill" and name and language:
-                placeholder = f"# Skill: {language}/{name}\n\n[Describe the {name} skill for {language}]\n"
-            elif file_type == "persona" and name:
-                placeholder = f"# Persona: {name}\n\n[Describe the {name} persona]\n"
-            else:
-                placeholder = f"# {name or 'File'}\n\n[Add content here]\n"
-            return placeholder, True
-    except Exception:
-        # Template not found, create placeholder
-        if file_type == "team" and name:
-            placeholder = f"# Team: {name}\n\n## Mission\n\n[Describe the team's mission]\n\n## Responsibilities\n\n- [Responsibility 1]\n- [Responsibility 2]\n\n## Key Contacts\n\n- Tech Lead: [Name]\n- Product Owner: [Name]\n"
-        elif file_type == "universal_skill" and name:
-            placeholder = f"# Skill: {name}\n\n[Describe the {name} skill and how it should be used]\n"
-        elif file_type == "language_skill" and name and language:
-            placeholder = f"# Skill: {language}/{name}\n\n[Describe the {name} skill for {language}]\n"
-        elif file_type == "persona" and name:
-            placeholder = f"# Persona: {name}\n\n[Describe the {name} persona]\n"
-        else:
-            placeholder = f"# {name or 'File'}\n\n[Add content here]\n"
-        return placeholder, True
-
-
-def _create_missing_file(
-    file_info: dict,
-    location: str,
-    repo_root: Path,
-    org_root: Path,
-    personal_overlay,
-    teams_list: list,
-    skills_list: list,
-    personas_list: list,
-    ctx
-) -> Path:
-    """
-    Create a missing file at the specified location.
-    
-    Args:
-        file_info: Parsed file information
-        location: "PERSONAL", "ORG", or "PROJECT"
-        repo_root: Repository root path
-        org_root: Organization root path
-        personal_overlay: Personal overlay path
-        teams_list: List of teams
-        skills_list: List of skills
-        personas_list: List of personas
-        ctx: Click context
-    
-    Returns:
-        Path to created file
-    """
-    # Determine file type and path if not already determined
-    if file_info.get("relative_path") is None:
-        file_info.update(_determine_file_type_and_path(
-            file_info["name"], repo_root, org_root, personal_overlay,
-            teams_list, skills_list, personas_list
-        ))
-    
-    relative_path = file_info["relative_path"]
-    
-    # Determine target path based on location
-    if location == "PERSONAL":
-        if not personal_overlay:
-            _error("Personal overlay not found. Cannot create file at PERSONAL level.", ctx)
-            sys.exit(1)
-        target_path = personal_overlay / relative_path
-    elif location == "ORG":
-        target_path = org_root / ".agent" / relative_path
-    else:  # PROJECT (default)
-        target_path = repo_root / ".agent" / relative_path
-    
-    # Get template or placeholder
-    content, is_placeholder = _get_template_content(
-        file_info["file_type"],
-        file_info.get("name"),
-        file_info.get("language")
-    )
-    
-    # Create parent directories
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Write file
-    with open(target_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    
-    # Alert user if placeholder was used
-    if is_placeholder:
-        click.echo(f"\n⚠️  No template found for {file_info['file_type']}. Created placeholder file.")
-    
-    return target_path
-
-
-def _offer_create_missing_files(
-    missing_files: list,
-    repo_root: Path,
-    org_root: Path,
-    personal_overlay,
-    teams_list: list,
-    skills_list: list,
-    personas_list: list,
-    ctx
-) -> list:
-    """
-    Offer to create missing files and handle user interaction.
-    
-    Returns:
-        List of created file paths
-    """
-    created_files = []
-    
-    try:
-        import questionary
-    except ImportError:
-        # Fallback to click prompts if questionary not available
-        questionary = None
-    
-    for missing_line in missing_files:
-        # Parse missing file info
-        file_info = _parse_missing_file(missing_line)
-        
-        # If relative_path not determined, try to determine it
-        if file_info.get("relative_path") is None:
-            file_info.update(_determine_file_type_and_path(
-                file_info["name"], repo_root, org_root, personal_overlay,
-                teams_list, skills_list, personas_list
-            ))
-        
-        file_name = file_info["name"]
-        file_type_display = file_info["file_type"].replace("_", " ").title()
-        
-        click.echo(f"\nMissing {file_type_display}: {file_name}")
-        
-        # Offer location choice
-        if questionary:
-            location = questionary.select(
-                f"Where should '{file_name}' be created?",
-                choices=["PROJECT (default)", "ORG", "PERSONAL"],
-                default="PROJECT (default)"
-            ).ask()
-            # Map the selected choice back to the location value
-            if location == "PROJECT (default)":
-                location = "PROJECT"
-        else:
-            click.echo("  Where should this file be created?")
-            click.echo("  1. PROJECT (default)")
-            click.echo("  2. ORG")
-            click.echo("  3. PERSONAL")
-            choice = click.prompt("Select [1-3]", default="1", type=click.Choice(["1", "2", "3"]))
-            location_map = {"1": "PROJECT", "2": "ORG", "3": "PERSONAL"}
-            location = location_map[choice]
-        
-        if not location:
-            click.echo("Skipping file creation.")
-            continue
-        
-        # Create the file
-        try:
-            created_path = _create_missing_file(
-                file_info, location, repo_root, org_root, personal_overlay,
-                teams_list, skills_list, personas_list, ctx
-            )
-            created_files.append(created_path)
-            click.echo(f"✓ Created: {created_path}")
-        except Exception as e:
-            _error(f"Failed to create file: {e}", ctx)
-            continue
-    
-    return created_files
 
 
 @cli.command()
@@ -418,7 +147,7 @@ def compile(
         # Find repo root
         repo_root = find_repo_root(explicit_path=Path(repo) if repo else None)
         if not repo_root:
-            _error(
+            error(
                 "Could not find repo root. Run from inside a repository or use --repo.",
                 ctx,
             )
@@ -429,13 +158,13 @@ def compile(
         try:
             inherits_config = load_inherits_yaml(inherits_path)
         except ConfigError as e:
-            _error(f"Error loading inherits.yaml: {e}", ctx)
+            error(f"Error loading inherits.yaml: {e}", ctx)
             sys.exit(1)
 
         # Find org root
         org_root = find_org_root(repo_root, inherits_config)
         if not org_root:
-            _error("Could not resolve org root from inherits.yaml", ctx)
+            error("Could not resolve org root from inherits.yaml", ctx)
             sys.exit(1)
 
         # Find personal overlay
@@ -488,7 +217,7 @@ def compile(
             summary_output_path = repo_root / "AGENTS.compiled.md"
 
         # Generate and show compilation summary
-        summary = _generate_compile_summary(
+        summary = generate_compile_summary(
             repo_root,
             org_root,
             personal_overlay,
@@ -519,7 +248,7 @@ def compile(
 
         if missing_files:
             if force:
-                _error(
+                error(
                     f"\nFound {len(missing_files)} missing file(s). Use --force to attempt compilation anyway (will fail).",
                     ctx,
                 )
@@ -529,7 +258,7 @@ def compile(
             if not ctx.obj["quiet"] and sys.stdin.isatty():
                 click.echo(f"\nFound {len(missing_files)} missing file(s).")
                 if click.confirm("Would you like to create them now?", default=True):
-                    created_files = _offer_create_missing_files(
+                    created_files = offer_create_missing_files(
                         missing_files,
                         repo_root,
                         org_root,
@@ -553,7 +282,7 @@ def compile(
                     click.echo("\nCompilation cancelled.")
                     sys.exit(0)
             else:
-                _error(
+                error(
                     f"\nFound {len(missing_files)} missing file(s). Please fix these issues before compiling.",
                     ctx,
                 )
@@ -590,7 +319,7 @@ def compile(
                 repo_root, org_root, personal_overlay, options
             )
         except CompileError as e:
-            _error(f"Compilation error: {e}", ctx)
+            error(f"Compilation error: {e}", ctx)
             sys.exit(1)
 
         # Determine output path
@@ -621,7 +350,7 @@ def compile(
                 )
 
             if target not in template_targets:
-                _error(
+                error(
                     f"Unknown target: {target}. Available: {', '.join(template_targets.keys())}",
                     ctx,
                 )
@@ -638,25 +367,14 @@ def compile(
                 with open(output_path, "r", encoding="utf-8") as f:
                     old_content = f.read()
                 # Remove maintenance comment for comparison
-                maintenance_comment = (
-                    "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
-                )
-                if old_content.startswith(maintenance_comment):
-                    old_content = old_content[len(maintenance_comment) :]
+                if old_content.startswith(MAINTENANCE_COMMENT):
+                    old_content = old_content[len(MAINTENANCE_COMMENT) :]
                 # Remove critical notice for comparison
-                if old_content.startswith(
-                    "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
-                ):
-                    old_content = old_content[
-                        len("> CRITICAL: Read AGENTS.compiled.md first.\n\n") :
-                    ]
-                elif old_content.startswith(
-                    "> CRITICAL: Read AGENTS.compiled.md first.\n"
-                ):
+                if old_content.startswith(CRITICAL_NOTICE_WITH_NL):
+                    old_content = old_content[len(CRITICAL_NOTICE_WITH_NL) :]
+                elif old_content.startswith(CRITICAL_NOTICE_WITHOUT_NL):
                     # For link mode files
-                    old_content = old_content[
-                        len("> CRITICAL: Read AGENTS.compiled.md first.\n") :
-                    ]
+                    old_content = old_content[len(CRITICAL_NOTICE_WITHOUT_NL) :]
                 # Also check for TOC
                 if old_content.startswith("## Table of Contents"):
                     # Find where TOC ends (usually after a blank line and before content)
@@ -685,19 +403,13 @@ def compile(
         if print_output:
             click.echo(compiled)
         else:
-            # Maintenance comment for all generated files
-            maintenance_comment = (
-                "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
-            )
-            
             # Always write AGENTS.compiled.md with full content
             agents_compiled_path = repo_root / "AGENTS.compiled.md"
             agents_compiled_path.parent.mkdir(parents=True, exist_ok=True)
-            critical_notice = "> CRITICAL: Read AGENTS.compiled.md first.\n\n"
-            toc = _generate_table_of_contents(compiled)
+            toc = generate_table_of_contents(compiled)
             with open(agents_compiled_path, "w", encoding="utf-8") as f:
-                f.write(maintenance_comment)
-                f.write(critical_notice)
+                f.write(MAINTENANCE_COMMENT)
+                f.write(CRITICAL_NOTICE_WITH_NL)
                 if toc:
                     f.write(toc + "\n\n")
                 f.write(compiled)
@@ -710,13 +422,13 @@ def compile(
                 if rules_mode == "link":
                     # Link mode: target files only contain the critical notice
                     with open(output_path, "w", encoding="utf-8") as f:
-                        f.write(maintenance_comment)
-                        f.write("> CRITICAL: Read AGENTS.compiled.md first.\n")
+                        f.write(MAINTENANCE_COMMENT)
+                        f.write(CRITICAL_NOTICE_WITHOUT_NL)
                 else:
                     # Copy mode: write full content without critical notice
-                    toc = _generate_table_of_contents(compiled)
+                    toc = generate_table_of_contents(compiled)
                     with open(output_path, "w", encoding="utf-8") as f:
-                        f.write(maintenance_comment)
+                        f.write(MAINTENANCE_COMMENT)
                         if toc:
                             f.write(toc + "\n\n")
                         f.write(compiled)
@@ -746,10 +458,6 @@ def compile(
                     )
 
                     created_targets = []
-                    # Maintenance comment for all generated files
-                    maintenance_comment = (
-                        "# This file is maintained by oat - run `oat compile` to update. - https://github.com/alain-sv/org-agentic-toolkit\n\n"
-                    )
                     
                     for agent_name in target_agents:
                         if agent_name in template_targets:
@@ -761,13 +469,13 @@ def compile(
                             if rules_mode == "link":
                                 # Link mode: only write the critical notice
                                 with open(target_file_path, "w", encoding="utf-8") as f:
-                                    f.write(maintenance_comment)
-                                    f.write("> CRITICAL: Read AGENTS.compiled.md first.\n")
+                                    f.write(MAINTENANCE_COMMENT)
+                                    f.write(CRITICAL_NOTICE_WITHOUT_NL)
                             else:
                                 # Copy mode: write full content without critical notice
-                                toc = _generate_table_of_contents(compiled)
+                                toc = generate_table_of_contents(compiled)
                                 with open(target_file_path, "w", encoding="utf-8") as f:
-                                    f.write(maintenance_comment)
+                                    f.write(MAINTENANCE_COMMENT)
                                     if toc:
                                         f.write(toc + "\n\n")
                                     f.write(compiled)
@@ -794,7 +502,7 @@ def compile(
                 click.echo("Watch mode not yet implemented. Use a file watcher tool.")
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
@@ -843,7 +551,7 @@ def validate(ctx, repo, strict, output_json):
             result = validate_repo(repo_root, strict=strict)
 
         else:
-            _error(
+            error(
                 "Could not detect OAT context (Org, Personal, or Project). Run from a valid root.",
                 ctx,
             )
@@ -874,7 +582,7 @@ def validate(ctx, repo, strict, output_json):
                 sys.exit(1)
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
@@ -886,25 +594,25 @@ def doctor(ctx, output_json):
     try:
         repo_root = find_repo_root()
         if not repo_root:
-            _error("Could not find repo root. Run from inside a repository.", ctx)
+            error("Could not find repo root. Run from inside a repository.", ctx)
             sys.exit(1)
 
         # Load inherits.yaml
         inherits_path = repo_root / ".agent" / "inherits.yaml"
         if not inherits_path.exists():
-            _error("No .agent/inherits.yaml found.", ctx)
+            error("No .agent/inherits.yaml found.", ctx)
             sys.exit(1)
 
         try:
             inherits_config = load_inherits_yaml(inherits_path)
         except ConfigError as e:
-            _error(f"Error loading inherits.yaml: {e}", ctx)
+            error(f"Error loading inherits.yaml: {e}", ctx)
             sys.exit(1)
 
         # Find org root
         org_root = find_org_root(repo_root, inherits_config)
         if not org_root:
-            _error("Could not resolve org root.", ctx)
+            error("Could not resolve org root.", ctx)
             sys.exit(1)
 
         # Get configuration
@@ -1029,7 +737,7 @@ def doctor(ctx, output_json):
                     )
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
@@ -1051,7 +759,7 @@ def init_project(ctx, org_root, force, suggest):
     try:
         repo_root = find_repo_root()
         if not repo_root:
-            _error("Could not find repo root. Run from inside a repository.", ctx)
+            error("Could not find repo root. Run from inside a repository.", ctx)
             sys.exit(1)
 
         # Check for existing files
@@ -1061,7 +769,7 @@ def init_project(ctx, org_root, force, suggest):
 
         if not force:
             if agents_md.exists() or inherits_yaml.exists() or project_md.exists():
-                _error("Files already exist. Use --force to overwrite.", ctx)
+                error("Files already exist. Use --force to overwrite.", ctx)
                 sys.exit(1)
 
         # Determine org root
@@ -1073,7 +781,7 @@ def init_project(ctx, org_root, force, suggest):
             org_root_path = find_org_root_by_walking(repo_root)
 
         if not org_root_path:
-            _error("Could not determine org root. Use --org-root to specify.", ctx)
+            error("Could not determine org root. Use --org-root to specify.", ctx)
             sys.exit(1)
 
         # Compute relative path
@@ -1107,7 +815,7 @@ def init_project(ctx, org_root, force, suggest):
 
         if suggest:
             # Pre-fill
-            suggestions = _suggest_skills_personas(repo_root)
+            suggestions = suggest_skills_personas(repo_root)
             if suggestions:
                 # Load default target agents from templates
                 import importlib.resources
@@ -1162,516 +870,10 @@ def init_project(ctx, org_root, force, suggest):
             click.echo("\nRun 'oat setup' to configure your project interactively.")
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
-def _get_available_options() -> dict:
-    """Scan template folders for available skills, personas, and teams."""
-    import importlib.resources
-
-    options: dict = {"skills": [], "personas": [], "teams": []}
-
-    def _get_stem(name: str) -> str:
-        """Extract stem from filename (name without extension)."""
-        if name.endswith(".md"):
-            return name[:-3]
-        return name
-
-    try:
-        templates_root = importlib.resources.files("oat.templates")
-
-        # Scan Universal Skills (files in skills/ root, excluding those starting with _)
-        skills_dir = templates_root.joinpath("skills")
-        if skills_dir.is_dir():
-            for item in skills_dir.iterdir():
-                if (
-                    item.is_file()
-                    and item.name.endswith(".md")
-                    and not item.name.startswith("_")
-                ):
-                    options["skills"].append(_get_stem(item.name))
-
-                # Scan Language Skills (subdirectories)
-                if item.is_dir():
-                    lang_skills = []
-                    for skill_file in item.iterdir():
-                        if (
-                            skill_file.is_file()
-                            and skill_file.name.endswith(".md")
-                            and not skill_file.name.startswith("_")
-                        ):
-                            lang_skills.append(_get_stem(skill_file.name))
-                    if lang_skills:
-                        options[item.name] = lang_skills
-
-        # Scan Personas (excluding those starting with _)
-        personas_dir = templates_root.joinpath("personas")
-        if personas_dir.is_dir():
-            for item in personas_dir.iterdir():
-                if (
-                    item.is_file()
-                    and item.name.endswith(".md")
-                    and not item.name.startswith("_")
-                ):
-                    options["personas"].append(_get_stem(item.name))
-
-        # Scan Teams (excluding those starting with _)
-        teams_dir = templates_root.joinpath("teams")
-        if teams_dir.is_dir():
-            for item in teams_dir.iterdir():
-                if (
-                    item.is_file()
-                    and item.name.endswith(".md")
-                    and not item.name.startswith("_")
-                ):
-                    options["teams"].append(_get_stem(item.name))
-
-    except Exception:
-        # Fallback: if template scanning fails, return empty options
-        pass
-
-    # Sort everything
-    for k in options:
-        if isinstance(options[k], list):
-            options[k].sort()
-
-    return options
-
-
-def _detect_languages(repo_root: Path) -> set:
-    """Detect main languages in the repo."""
-    langs = set()
-    if (
-        (repo_root / "requirements.txt").exists()
-        or (repo_root / "pyproject.toml").exists()
-        or (repo_root / "setup.py").exists()
-        or list(repo_root.glob("*.py"))
-    ):
-        langs.add("python")
-
-    if (
-        (repo_root / "package.json").exists()
-        or list(repo_root.glob("*.js"))
-        or (repo_root / "node_modules").exists()
-    ):
-        langs.add("javascript")
-
-    if (
-        (repo_root / "tsconfig.json").exists()
-        or list(repo_root.glob("*.ts"))
-        or list(repo_root.glob("*.tsx"))
-    ):
-        langs.add("typescript")
-
-    if (repo_root / "go.mod").exists() or list(repo_root.glob("*.go")):
-        langs.add("go")
-
-    if (repo_root / "Cargo.toml").exists() or list(repo_root.glob("*.rs")):
-        langs.add("rust")
-
-    if (
-        (repo_root / "pom.xml").exists()
-        or (repo_root / "build.gradle").exists()
-        or list(repo_root.glob("*.java"))
-    ):
-        langs.add("java")
-
-    return langs
-
-
-def _suggest_skills_personas(repo_root: Path) -> dict:
-    """Suggest skills and personas based on project files."""
-    suggestions = {"skills": [], "personas": []}
-
-    # Detect languages/frameworks
-    detected_langs = set()
-
-    # Check for Python
-    if (
-        (repo_root / "requirements.txt").exists()
-        or (repo_root / "pyproject.toml").exists()
-        or (repo_root / "setup.py").exists()
-        or list(repo_root.glob("*.py"))
-    ):
-        detected_langs.add("python")
-        suggestions["skills"].extend(["django", "fastapi", "pytest"])
-        suggestions["personas"].append("backend-developer")
-
-    # Check for JavaScript/Node.js
-    if (
-        (repo_root / "package.json").exists()
-        or list(repo_root.glob("*.js"))
-        or (repo_root / "node_modules").exists()
-    ):
-        detected_langs.add("javascript")
-        suggestions["skills"].extend(["react", "nodejs", "jest"])
-        suggestions["personas"].extend(["frontend-developer", "backend-developer"])
-
-    # Check for TypeScript
-    if (
-        (repo_root / "tsconfig.json").exists()
-        or list(repo_root.glob("*.ts"))
-        or list(repo_root.glob("*.tsx"))
-    ):
-        detected_langs.add("typescript")
-        suggestions["skills"].extend(["angular", "nestjs"])
-
-    # Check for Go
-    if (repo_root / "go.mod").exists() or list(repo_root.glob("*.go")):
-        detected_langs.add("go")
-        suggestions["skills"].extend(["gin", "testing"])
-        suggestions["personas"].append("backend-developer")
-
-    # Check for Rust
-    if (repo_root / "Cargo.toml").exists() or list(repo_root.glob("*.rs")):
-        detected_langs.add("rust")
-        suggestions["skills"].extend(["cargo", "testing"])
-        suggestions["personas"].append("backend-developer")
-
-    # Check for Java
-    if (
-        (repo_root / "pom.xml").exists()
-        or (repo_root / "build.gradle").exists()
-        or list(repo_root.glob("*.java"))
-    ):
-        detected_langs.add("java")
-        suggestions["skills"].extend(["spring", "maven"])
-        suggestions["personas"].append("backend-developer")
-
-    # Always suggest universal skills
-    suggestions["skills"].extend(["git", "test", "db", "review-checklist"])
-
-    # Always suggest tech-lead
-    suggestions["personas"].append("tech-lead")
-
-    # Remove duplicates
-    suggestions["skills"] = list(set(suggestions["skills"]))
-    suggestions["personas"] = list(set(suggestions["personas"]))
-
-    return suggestions
-
-
-def _error(message: str, ctx):
-    """Print error message."""
-    if ctx.obj.get("json"):
-        click.echo(json.dumps({"error": message}))
-    else:
-        click.echo(f"Error: {message}", err=True)
-
-
-def _generate_table_of_contents(content: str) -> str:
-    """
-    Generate a table of contents from markdown headers in the content.
-    Uses GitHub-style anchor generation.
-
-    Args:
-        content: Markdown content to extract headers from
-
-    Returns:
-        Table of contents as markdown, or empty string if no headers found
-    """
-    import re
-
-    lines = []
-    headers = []
-
-    # Extract headers (##, ###, ####, etc.)
-    for line in content.split("\n"):
-        # Match markdown headers (## Header or ### Header)
-        match = re.match(r"^(#{2,6})\s+(.+)$", line)
-        if match:
-            level = len(match.group(1))  # Number of # characters
-            header_text = match.group(2).strip()
-            # Create GitHub-style anchor from header text
-            # GitHub anchors: lowercase, replace spaces with hyphens, remove special chars
-            anchor = header_text.lower()
-            # Remove markdown links and images: [text](url) or ![alt](url)
-            anchor = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", anchor)
-            anchor = re.sub(r"!\[([^\]]+)\]\([^\)]+\)", r"\1", anchor)
-            # Remove special characters except spaces and hyphens
-            anchor = re.sub(r"[^\w\s-]", "", anchor)
-            # Replace spaces and multiple hyphens with single hyphen
-            anchor = re.sub(r"[-\s]+", "-", anchor)
-            anchor = anchor.strip("-")
-            headers.append((level, header_text, anchor))
-
-    if not headers:
-        return ""
-
-    # Generate TOC
-    lines.append("## Table of Contents")
-    lines.append("")
-
-    for level, header_text, anchor in headers:
-        indent = "  " * (
-            level - 2
-        )  # Indent based on header level (## = 0, ### = 2, etc.)
-        lines.append(f"{indent}- [{header_text}](#{anchor})")
-
-    return "\n".join(lines)
-
-
-def _find_file_in_locations(
-    file_path: str, personal_overlay, org_root: Path, repo_root: Path
-) -> tuple:
-    """
-    Find a file in the correct precedence order: personal -> org -> project.
-
-    Args:
-        file_path: Relative path from .agent (e.g., "skills/db.md")
-        personal_overlay: Path to personal overlay (already the .agent directory, e.g., ~/.agent)
-        org_root: Path to organization root
-        repo_root: Path to repository root
-
-    Returns:
-        Tuple of (found_path, locations_found_list)
-        found_path is None if not found anywhere
-        locations_found_list contains all locations where file exists
-    """
-    locations_found = []
-    found_path = None
-
-    # 1. Check personal overlay (highest precedence)
-    if personal_overlay:
-        personal_path = personal_overlay / file_path
-        if personal_path.exists():
-            locations_found.append(("personal", personal_path))
-            found_path = personal_path
-
-    # 2. Check org root
-    org_path = org_root / ".agent" / file_path
-    if org_path.exists():
-        locations_found.append(("org", org_path))
-        if found_path is None:
-            found_path = org_path
-
-    # 3. Check project repo (lowest precedence)
-    project_path = repo_root / ".agent" / file_path
-    if project_path.exists():
-        locations_found.append(("project", project_path))
-        if found_path is None:
-            found_path = project_path
-
-    return found_path, locations_found
-
-
-def _generate_compile_summary(
-    repo_root: Path,
-    org_root: Path,
-    personal_overlay,
-    inherits_config: dict,
-    options: CompileOptions,
-    output_path: Path,
-    target=None,
-) -> str:
-    """
-    Generate a summary of what will be compiled, including file locations and missing files.
-    Files are searched in order: personal -> org -> project.
-
-    Args:
-        repo_root: Path to repository root
-        org_root: Path to organization root
-        personal_overlay: Path to personal overlay (optional)
-        inherits_config: Parsed inherits.yaml configuration
-        options: Compile options
-        output_path: Path where output will be written
-        target: Target IDE name (optional)
-
-    Returns:
-        Formatted summary string
-    """
-
-    lines = []
-    missing_count = 0
-    warnings = []
-
-    # Get configuration
-    skills_config = get_skills_from_config(inherits_config)
-    personas_list = get_personas_from_config(inherits_config)
-    teams_list = get_teams_from_config(inherits_config)
-
-    # Apply filters
-    universal_skills = skills_config.get("universal", []).copy()
-    for skill in options.exclude_skills:
-        if skill in universal_skills:
-            universal_skills.remove(skill)
-    for skill in options.include_skills:
-        if skill not in universal_skills:
-            universal_skills.append(skill)
-
-    personas = personas_list.copy()
-    for persona in options.exclude_personas:
-        if persona in personas:
-            personas.remove(persona)
-    for persona in options.include_personas:
-        if persona not in personas:
-            personas.append(persona)
-
-    # Entry Point
-    agents_md_path = repo_root / "AGENTS.md"
-    if agents_md_path.exists():
-        lines.append(f"✓ Entry Point: {agents_md_path}")
-    else:
-        lines.append(f"○ Entry Point: {agents_md_path} (optional, not found)")
-
-    # Org Memory
-    lines.append("\nOrg Memory:")
-    constitution_path = org_root / ".agent" / "memory" / "constitution.md"
-    if constitution_path.exists():
-        lines.append(f"  ✓ Constitution: {constitution_path}")
-    else:
-        lines.append(f"  ❌ MISSING: Constitution: {constitution_path}")
-        missing_count += 1
-
-    general_context_path = org_root / ".agent" / "memory" / "general-context.md"
-    if general_context_path.exists():
-        lines.append(f"  ✓ General Context: {general_context_path}")
-    else:
-        lines.append(f"  ○ General Context: {general_context_path} (optional)")
-
-    # Teams (from inherits.yaml or personal overlay)
-    teams_to_check = teams_list.copy()
-    
-    # Check personal overlay for team context if not specified in inherits.yaml
-    if not teams_to_check and not options.no_personal and personal_overlay:
-        me_path = personal_overlay / "personas" / "me.md"
-        if me_path.exists():
-            try:
-                me_content = me_path.read_text(encoding="utf-8")
-                # Try to extract team from me.md (format: "team: [TEAM_NAME]")
-                for line in me_content.split("\n"):
-                    if line.strip().startswith("team:"):
-                        team_name = line.split(":", 1)[1].strip().strip("[]")
-                        if team_name:
-                            teams_to_check = [team_name]
-                            break
-            except Exception:
-                pass  # Ignore errors reading me.md in summary
-    
-    # Teams
-    if teams_to_check:
-        lines.append("\nTeams:")
-        for team_name in teams_to_check:
-            file_path = f"memory/teams/{team_name}.md"
-            found_path, locations = _find_file_in_locations(
-                file_path, personal_overlay, org_root, repo_root
-            )
-            if found_path:
-                location_names = [loc[0] for loc in locations]
-                primary_loc = locations[0][0]
-                if len(locations) > 1:
-                    warnings.append(
-                        f"Team '{team_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
-                    )
-                lines.append(f"  ✓ {team_name}: {found_path} [{primary_loc}]")
-            else:
-                lines.append(f"  ❌ MISSING: {team_name}")
-                missing_count += 1
-
-    # Universal Skills
-    if universal_skills:
-        lines.append("\nUniversal Skills:")
-        for skill_name in universal_skills:
-            file_path = f"skills/{skill_name}.md"
-            found_path, locations = _find_file_in_locations(
-                file_path, personal_overlay, org_root, repo_root
-            )
-            if found_path:
-                location_names = [loc[0] for loc in locations]
-                primary_loc = locations[0][0]
-                if len(locations) > 1:
-                    warnings.append(
-                        f"Skill '{skill_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
-                    )
-                lines.append(f"  ✓ {skill_name}: {found_path} [{primary_loc}]")
-            else:
-                lines.append(f"  ❌ MISSING: {skill_name}")
-                missing_count += 1
-
-    # Language Skills
-    lang_skills_raw: dict = skills_config.get("languages", {})
-    language_skills = lang_skills_raw if isinstance(lang_skills_raw, dict) else {}
-    if language_skills:
-        lines.append("\nLanguage Skills:")
-        for lang, lang_skill_list in language_skills.items():
-            for skill_name in lang_skill_list:
-                file_path = f"skills/{lang}/{skill_name}.md"
-                found_path, locations = _find_file_in_locations(
-                    file_path, personal_overlay, org_root, repo_root
-                )
-                if found_path:
-                    location_names = [loc[0] for loc in locations]
-                    primary_loc = locations[0][0]
-                    if len(locations) > 1:
-                        warnings.append(
-                            f"Skill '{lang}/{skill_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
-                        )
-                    lines.append(
-                        f"  ✓ {lang}/{skill_name}: {found_path} [{primary_loc}]"
-                    )
-                else:
-                    lines.append(f"  ❌ MISSING: {lang}/{skill_name}")
-                    missing_count += 1
-
-    # Personas
-    if personas:
-        lines.append("\nPersonas:")
-        for persona_name in personas:
-            file_path = f"personas/{persona_name}.md"
-            found_path, locations = _find_file_in_locations(
-                file_path, personal_overlay, org_root, repo_root
-            )
-            if found_path:
-                location_names = [loc[0] for loc in locations]
-                primary_loc = locations[0][0]
-                if len(locations) > 1:
-                    warnings.append(
-                        f"Persona '{persona_name}' found in multiple locations: {', '.join(location_names)}. Using {primary_loc}."
-                    )
-                lines.append(f"  ✓ {persona_name}: {found_path} [{primary_loc}]")
-            else:
-                lines.append(f"  ❌ MISSING: {persona_name}")
-                missing_count += 1
-
-    # Project Rules
-    lines.append("\nProject Rules:")
-    project_md_path = repo_root / ".agent" / "project.md"
-    if project_md_path.exists():
-        lines.append(f"  ✓ Project Rules: {project_md_path}")
-    else:
-        lines.append(f"  ○ Project Rules: {project_md_path} (optional)")
-
-    # Personal Overlay
-    if not options.no_personal and personal_overlay:
-        lines.append("\nPersonal Overlay:")
-        lines.append(f"  ✓ Personal Overlay: {personal_overlay}")
-        personal_memory_path = personal_overlay / "memory" / "personal-context.md"
-        if personal_memory_path.exists():
-            lines.append(f"    ✓ Personal Memory: {personal_memory_path}")
-        me_path = personal_overlay / "personas" / "me.md"
-        if me_path.exists():
-            lines.append(f"    ✓ Personal Persona: {me_path}")
-    elif not options.no_personal:
-        lines.append("\nPersonal Overlay:")
-        lines.append("  ○ Personal Overlay: Not found (optional)")
-
-    # Output path
-    lines.append("\nOutput:")
-    if target:
-        lines.append(f"  → {output_path} (target: {target})")
-    else:
-        lines.append(f"  → {output_path}")
-
-    if warnings:
-        lines.append("\n⚠️  Warnings (non-blocking):")
-        for warning in warnings:
-            lines.append(f"  ⚠ {warning}")
-
-    if missing_count > 0:
-        lines.append(f"\n❌ Error: {missing_count} file(s) are missing!")
-
-    return "\n".join(lines)
 
 
 @init.command("org")
@@ -1705,7 +907,13 @@ def init_org(ctx, name, force):
         # 1. .oat-root
         _create_file(root / ".oat-root", "")
 
-        # 2. Memory (Constitution, etc.)
+        # 2. AGENTS.md
+        _create_file(
+            root / "AGENTS.md",
+            get_agents_org_md_template(),
+        )
+
+        # 3. Memory (Constitution, etc.)
         _create_file(
             root / ".agent" / "memory" / "constitution.md",
             get_constitution_md_template(),
@@ -1719,20 +927,20 @@ def init_org(ctx, name, force):
             get_manifest_yaml_template(name),
         )
 
-        # 4. Teams (template)
+        # 5. Teams (template)
         _create_file(
             root / ".agent" / "memory" / "teams" / "_template.md",
             get_team_md_template("TEMPLATE"),
         )
 
-        # 5. Skills (dir only)
+        # 6. Skills (dir only)
         (root / ".agent" / "skills" / "python").mkdir(parents=True, exist_ok=True)
         (root / ".agent" / "skills" / "javascript").mkdir(parents=True, exist_ok=True)
 
-        # 6. Personas (dir only)
+        # 7. Personas (dir only)
         (root / ".agent" / "personas").mkdir(parents=True, exist_ok=True)
 
-        # 7. Toolkit
+        # 8. Toolkit
         (root / ".agent" / "toolkit").mkdir(parents=True, exist_ok=True)
         # We could copy schemas here if we had them as resources
 
@@ -1754,7 +962,7 @@ def init_org(ctx, name, force):
             )
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
@@ -1766,14 +974,25 @@ def init_personal(ctx, path, force):
     """Initialize personal overlay directory."""
     try:
         if path:
-            personal_path = Path(path).expanduser().resolve()
+            base_path = Path(path).expanduser().resolve()
+            # If path doesn't end with .agent, create .agent subdirectory
+            if base_path.name == ".agent":
+                personal_path = base_path
+            else:
+                personal_path = base_path / ".agent"
         elif "AGENT_PERSONAL_FOLDER" in sys.modules["os"].environ:
-            personal_path = (
+            env_path = (
                 Path(sys.modules["os"].environ["AGENT_PERSONAL_FOLDER"])
                 .expanduser()
                 .resolve()
             )
+            # If env path doesn't end with .agent, create .agent subdirectory
+            if env_path.name == ".agent":
+                personal_path = env_path
+            else:
+                personal_path = env_path / ".agent"
         else:
+            # Default: ~/.agent is the .agent directory itself
             personal_path = Path.home() / ".agent"
 
         click.echo(f"Initializing personal overlay at: {personal_path}")
@@ -1790,12 +1009,6 @@ def init_personal(ctx, path, force):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             created.append(str(path))
-
-        if not ctx.obj["quiet"]:
-            if created:
-                click.echo(f"Created {len(created)} files")
-            if skipped:
-                click.echo(f"Skipped {len(skipped)} existing files")
 
         # 1. Personal Memory
         _create_file(
@@ -1838,8 +1051,14 @@ def init_personal(ctx, path, force):
 
         _create_file(personal_path / "personas" / "me.md", me_content)
 
+        if not ctx.obj["quiet"]:
+            if created:
+                click.echo(f"Created {len(created)} files")
+            if skipped:
+                click.echo(f"Skipped {len(skipped)} existing files")
+
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 
@@ -1847,409 +1066,9 @@ def init_personal(ctx, path, force):
 @click.pass_context
 def setup(ctx):
     """Interactive setup for project configuration."""
-    _run_setup(ctx)
+    run_setup(ctx)
 
 
-def _run_setup(ctx):
-    """Refactored setup logic shared between setup command and init_project."""
-    try:
-        import questionary
-
-        repo_root = find_repo_root()
-        if not repo_root:
-            _error("Could not find repo root. Run from inside a repository.", ctx)
-            sys.exit(1)
-
-        inherits_path = repo_root / ".agent" / "inherits.yaml"
-        current_config = {}
-        if inherits_path.exists():
-            try:
-                current_config = load_inherits_yaml(inherits_path)
-            except ConfigError:
-                if not ctx.obj["quiet"]:
-                    click.echo(
-                        "Warning: Existing inherits.yaml is invalid. Starting fresh."
-                    )
-
-        # Determine org root
-        # First, check if repo_root itself is the org root (has .oat-root)
-        org_root_path = None
-        if (repo_root / ".oat-root").exists():
-            org_root_path = repo_root
-        elif "org_root" in current_config:
-            # Try to resolve from inherits.yaml
-            org_root_path = (repo_root / current_config["org_root"]).resolve()
-            # Verify it's actually an org root
-            if not org_root_path.exists() or not (
-                (org_root_path / ".oat-root").exists()
-                or (org_root_path / ".agent" / "memory" / "constitution.md").exists()
-            ):
-                org_root_path = None
-
-        # If not found, walk up the directory tree looking for .oat-root
-        if not org_root_path:
-            org_root_path = find_org_root_by_walking(repo_root)
-
-        if not org_root_path:
-            _error(
-                "Could not find Organization Root. A directory with a .oat-root file must exist. "
-                "Please run 'oat init org' to create one, or 'oat init project --org-root <path>' to link to an existing one.",
-                ctx,
-            )
-            sys.exit(1)
-
-        try:
-            org_root_rel = str(Path(org_root_path).relative_to(repo_root))
-        except ValueError:
-            org_root_rel = str(org_root_path)
-
-        # Get available options
-        options = _get_available_options()
-
-        # Prepare defaults from current config
-        current_skills = current_config.get("skills", {}).get("universal", [])
-        current_personas = current_config.get("personas", [])
-        current_team = (
-            current_config.get("teams", [None])[0]
-            if current_config.get("teams")
-            else None
-        )
-        # Load available target agents from templates
-        import importlib.resources
-
-        available_targets = []
-        try:
-            targets_path = importlib.resources.files("oat.templates").joinpath(
-                "toolkit/targets.yaml"
-            )
-            targets_content = targets_path.read_text(encoding="utf-8")
-            import yaml
-
-            targets_config = yaml.safe_load(targets_content)
-            if isinstance(targets_config, dict) and "targets" in targets_config:
-                available_targets = list(targets_config["targets"].keys())
-        except Exception:
-            # Fallback to default targets if template loading fails
-            available_targets = ["cursor", "windsurf"]
-
-        # Default to first two targets if no current config, or use current config
-        if not current_config.get("target_agents"):
-            default_targets = (
-                available_targets[:2]
-                if len(available_targets) >= 2
-                else available_targets
-            )
-        else:
-            default_targets = current_config.get("target_agents", [])
-        current_targets = default_targets
-        current_lang_skills = current_config.get("skills", {}).get("languages", {})
-
-        click.echo(f"\nConfiguring Project at: {repo_root}")
-        click.echo(f"Linked Org Root: {org_root_path}")
-
-        # 1. TEAM
-        if options["teams"]:
-            team_choices = ["None"] + options["teams"]
-            default_team = current_team if current_team in options["teams"] else "None"
-
-            selected_team = questionary.select(
-                "Select Team:", choices=team_choices, default=default_team
-            ).ask()
-
-            if selected_team == "None":
-                current_team = None
-            else:
-                current_team = selected_team
-
-        # 2. UNIVERSAL SKILLS
-        if options["skills"]:
-            # Pre-select based on current config
-            choices = []
-            for skill in options["skills"]:
-                choices.append(
-                    questionary.Choice(skill, checked=(skill in current_skills))
-                )
-
-            current_skills = questionary.checkbox(
-                "Select Universal Skills:", choices=choices
-            ).ask()
-
-        # 3. LANGUAGES & SKILLS
-        all_langs = sorted(
-            list(set([k for k in options if k not in ["teams", "skills", "personas"]]))
-        )
-        detected = _detect_languages(repo_root)  # set of detected languages
-
-        if all_langs:
-            # First, ask which languages to configure
-            # Default to detected + currently configured
-            lang_choices = []
-            for lang in all_langs:
-                checked = (lang in detected) or (lang in current_lang_skills)
-                lang_choices.append(questionary.Choice(lang, checked=checked))
-
-            selected_langs = questionary.checkbox(
-                "Select Languages to configure:", choices=lang_choices
-            ).ask()
-
-            # Now for each selected language, pick skills
-            new_lang_skills = {}
-            for lang in selected_langs:
-                available = options[lang]
-                if not available:
-                    continue
-
-                curr = current_lang_skills.get(lang, [])
-                skill_choices = []
-                for s in available:
-                    skill_choices.append(questionary.Choice(s, checked=(s in curr)))
-
-                chosen = questionary.checkbox(
-                    f"Select {lang} Skills:", choices=skill_choices
-                ).ask()
-
-                if chosen:
-                    new_lang_skills[lang] = chosen
-
-            current_lang_skills = new_lang_skills
-
-        # 4. PERSONAS
-        if options["personas"]:
-            persona_choices = []
-            for p in options["personas"]:
-                persona_choices.append(
-                    questionary.Choice(p, checked=(p in current_personas))
-                )
-
-            current_personas = questionary.checkbox(
-                "Select Personas:", choices=persona_choices
-            ).ask()
-
-        # 5. TARGET AGENTS
-        target_choices = []
-        for target in available_targets:
-            target_choices.append(
-                questionary.Choice(target, checked=(target in current_targets))
-            )
-
-        current_targets = questionary.checkbox(
-            "Select Target Agents:", choices=target_choices
-        ).ask()
-
-        # SAVE
-        new_config = {
-            "org_root": org_root_rel,
-            "skills": {"universal": current_skills, "languages": current_lang_skills},
-            "personas": current_personas,
-            "target_agents": current_targets,
-        }
-        if current_team:
-            new_config["teams"] = [current_team]
-
-        import yaml
-
-        with open(inherits_path, "w", encoding="utf-8") as f:
-            yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
-
-        if not ctx.obj["quiet"]:
-            click.echo(f"\nConfiguration saved to {inherits_path}")
-
-        # Run sync from_template to copy missing files
-        if not ctx.obj["quiet"]:
-            click.echo("\nSyncing templates to .agent folder...")
-        _sync_from_template(repo_root, new_config, ctx)
-
-    except ImportError:
-        _error(
-            "Module 'questionary' not found. Please reinstall org-agentic-toolkit.", ctx
-        )
-        sys.exit(1)
-    except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
-        sys.exit(1)
-
-
-def _sync_from_template(repo_root: Path, config: dict, ctx):
-    """
-    Sync template files to .agent folder based on inherits.yaml configuration.
-
-    Args:
-        repo_root: Path to repository root
-        config: Parsed inherits.yaml configuration dict
-        ctx: Click context
-    """
-    import importlib.resources
-
-    added_files = []
-    removed_suggestions = []
-
-    try:
-        templates_root = importlib.resources.files("oat.templates")
-        agent_dir = repo_root / ".agent"
-
-        # Sync Universal Skills
-        skills_config = config.get("skills", {})
-        universal_skills = skills_config.get("universal", [])
-        skills_dir = agent_dir / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        templates_skills_dir = templates_root.joinpath("skills")
-        if templates_skills_dir.is_dir():
-            # Get all existing files in .agent/skills
-            existing_skills = set()
-            if skills_dir.exists():
-                for f in skills_dir.glob("*.md"):
-                    existing_skills.add(f.stem)
-
-            # Copy missing universal skills
-            for skill_name in universal_skills:
-                template_file = templates_skills_dir.joinpath(f"{skill_name}.md")
-                if template_file.is_file():
-                    target_file = skills_dir / f"{skill_name}.md"
-                    if not target_file.exists():
-                        content = template_file.read_text(encoding="utf-8")
-                        target_file.write_text(content, encoding="utf-8")
-                        added_files.append(f".agent/skills/{skill_name}.md")
-                elif skill_name not in existing_skills:
-                    # Skill is in config but template doesn't exist
-                    if not ctx.obj["quiet"]:
-                        click.echo(
-                            f"Warning: Template for skill '{skill_name}' not found in templates",
-                            err=True,
-                        )
-
-            # Suggest removal of skills not in config
-            for existing_skill in existing_skills:
-                if existing_skill not in universal_skills:
-                    removed_suggestions.append(f".agent/skills/{existing_skill}.md")
-
-        # Sync Language Skills
-        language_skills = skills_config.get("languages", {})
-        for lang, lang_skill_list in language_skills.items():
-            lang_skills_dir = skills_dir / lang
-            lang_skills_dir.mkdir(parents=True, exist_ok=True)
-
-            templates_lang_dir = templates_skills_dir.joinpath(lang)
-            if templates_lang_dir.is_dir():
-                # Get existing files
-                existing_lang_skills = set()
-                if lang_skills_dir.exists():
-                    for f in lang_skills_dir.glob("*.md"):
-                        existing_lang_skills.add(f.stem)
-
-                # Copy missing language skills
-                for skill_name in lang_skill_list:
-                    template_file = templates_lang_dir.joinpath(f"{skill_name}.md")
-                    if template_file.is_file():
-                        target_file = lang_skills_dir / f"{skill_name}.md"
-                        if not target_file.exists():
-                            content = template_file.read_text(encoding="utf-8")
-                            target_file.write_text(content, encoding="utf-8")
-                            added_files.append(f".agent/skills/{lang}/{skill_name}.md")
-                    elif skill_name not in existing_lang_skills:
-                        if not ctx.obj["quiet"]:
-                            click.echo(
-                                f"Warning: Template for skill '{lang}/{skill_name}' not found in templates",
-                                err=True,
-                            )
-
-                # Suggest removal
-                for existing_skill in existing_lang_skills:
-                    if existing_skill not in lang_skill_list:
-                        removed_suggestions.append(
-                            f".agent/skills/{lang}/{existing_skill}.md"
-                        )
-
-        # Sync Personas
-        personas_list = config.get("personas", [])
-        personas_dir = agent_dir / "personas"
-        personas_dir.mkdir(parents=True, exist_ok=True)
-
-        templates_personas_dir = templates_root.joinpath("personas")
-        if templates_personas_dir.is_dir():
-            # Get existing files
-            existing_personas = set()
-            if personas_dir.exists():
-                for f in personas_dir.glob("*.md"):
-                    existing_personas.add(f.stem)
-
-            # Copy missing personas
-            for persona_name in personas_list:
-                template_file = templates_personas_dir.joinpath(f"{persona_name}.md")
-                if template_file.is_file():
-                    target_file = personas_dir / f"{persona_name}.md"
-                    if not target_file.exists():
-                        content = template_file.read_text(encoding="utf-8")
-                        target_file.write_text(content, encoding="utf-8")
-                        added_files.append(f".agent/personas/{persona_name}.md")
-                elif persona_name not in existing_personas:
-                    if not ctx.obj["quiet"]:
-                        click.echo(
-                            f"Warning: Template for persona '{persona_name}' not found in templates",
-                            err=True,
-                        )
-
-            # Suggest removal
-            for existing_persona in existing_personas:
-                if existing_persona not in personas_list:
-                    removed_suggestions.append(f".agent/personas/{existing_persona}.md")
-
-        # Sync Teams
-        teams_list = config.get("teams", [])
-        teams_dir = agent_dir / "memory" / "teams"
-        teams_dir.mkdir(parents=True, exist_ok=True)
-
-        templates_teams_dir = templates_root.joinpath("teams")
-        if templates_teams_dir.is_dir():
-            # Get existing files (excluding _template.md)
-            existing_teams = set()
-            if teams_dir.exists():
-                for f in teams_dir.glob("*.md"):
-                    if f.stem != "_template":
-                        existing_teams.add(f.stem)
-
-            # Copy missing teams
-            for team_name in teams_list:
-                template_file = templates_teams_dir.joinpath(f"{team_name}.md")
-                if template_file.is_file():
-                    target_file = teams_dir / f"{team_name}.md"
-                    if not target_file.exists():
-                        content = template_file.read_text(encoding="utf-8")
-                        target_file.write_text(content, encoding="utf-8")
-                        added_files.append(f".agent/memory/teams/{team_name}.md")
-                elif team_name not in existing_teams:
-                    if not ctx.obj["quiet"]:
-                        click.echo(
-                            f"Warning: Template for team '{team_name}' not found in templates",
-                            err=True,
-                        )
-
-            # Suggest removal
-            for existing_team in existing_teams:
-                if existing_team not in teams_list:
-                    removed_suggestions.append(
-                        f".agent/memory/teams/{existing_team}.md"
-                    )
-
-        # Report results
-        if not ctx.obj["quiet"]:
-            if added_files:
-                click.echo(f"\nAdded {len(added_files)} file(s):")
-                for file_path in added_files:
-                    click.echo(f"  + {file_path}")
-            else:
-                click.echo("\nNo new files to add.")
-
-            if removed_suggestions:
-                click.echo(
-                    f"\nNote: {len(removed_suggestions)} file(s) in .agent/ are not in inherits.yaml and may be removed:"
-                )
-                for file_path in removed_suggestions:
-                    click.echo(f"  - {file_path}")
-
-    except Exception as e:
-        if not ctx.obj["quiet"]:
-            click.echo(f"Warning: Error syncing templates: {e}", err=True)
 
 
 @cli.group()
@@ -2266,7 +1085,7 @@ def sync_from_template(ctx, repo):
     try:
         repo_root = find_repo_root(explicit_path=Path(repo) if repo else None)
         if not repo_root:
-            _error(
+            error(
                 "Could not find repo root. Run from inside a repository or use --repo.",
                 ctx,
             )
@@ -2274,19 +1093,19 @@ def sync_from_template(ctx, repo):
 
         inherits_path = repo_root / ".agent" / "inherits.yaml"
         if not inherits_path.exists():
-            _error("No .agent/inherits.yaml found. Run 'oat init project' first.", ctx)
+            error("No .agent/inherits.yaml found. Run 'oat init project' first.", ctx)
             sys.exit(1)
 
         try:
             config = load_inherits_yaml(inherits_path)
         except ConfigError as e:
-            _error(f"Error loading inherits.yaml: {e}", ctx)
+            error(f"Error loading inherits.yaml: {e}", ctx)
             sys.exit(1)
 
-        _sync_from_template(repo_root, config, ctx)
+        sync_from_template_helper(repo_root, config, ctx)
 
     except Exception as e:
-        _error(f"Unexpected error: {e}", ctx)
+        error(f"Unexpected error: {e}", ctx)
         sys.exit(1)
 
 

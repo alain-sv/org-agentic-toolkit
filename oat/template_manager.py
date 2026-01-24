@@ -34,8 +34,13 @@ def _read_template(filename: str) -> str:
 
 
 def get_agents_md_template() -> str:
-    """Get the template for AGENTS.md."""
+    """Get the template for AGENTS.md (project version)."""
     return _read_template(TEMPLATE_FILES["AGENTS_MD"])
+
+
+def get_agents_org_md_template() -> str:
+    """Get the template for AGENTS.md (org root version)."""
+    return _read_template("toolkit/templates/AGENTS.md.template")
 
 
 def get_inherits_yaml_template() -> str:
