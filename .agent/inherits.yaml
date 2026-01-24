@@ -1,0 +1,16 @@
+org_root: /Volumes/SSDext1TB/Documents/GitRepo/ALAIN_SV
+# Required: Explicitly declare which skills are relevant for this project
+skills:
+  universal:
+    - test
+  languages:
+    python:
+      - python
+      - pytest
+# Required: Explicitly declare which personas are relevant for this project
+personas:
+  - tech-lead
+# Optional: Declare which teams are relevant (for team-specific memory)
+# Optional: Declare which target agents to generate instructions for
+target_agents:
+  - cursor

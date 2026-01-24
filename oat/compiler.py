@@ -1,6 +1,7 @@
 """Compilation engine for merging agent rules from multiple sources."""
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass
@@ -269,10 +270,10 @@ def compile_document(
         metadata["personal_overlay"] = str(personal_overlay)
     
     # Merge all sources
-    compiled = merge_markdown(sources)
+    compiled = merge_markdown(sources, repo_root, personal_overlay)
     
     # Add traceability header
-    header = _build_traceability_header(metadata, options.include_hash)
+    header = _build_traceability_header(metadata, repo_root, options.include_hash)
     compiled = header + "\n\n" + compiled
     
     # Compute hash if requested
@@ -283,12 +284,14 @@ def compile_document(
     return compiled, metadata
 
 
-def merge_markdown(sources: List[Tuple[str, Path, str]]) -> str:
+def merge_markdown(sources: List[Tuple[str, Path, str]], repo_root: Path, personal_overlay: Optional[Path]) -> str:
     """
     Merge multiple markdown files with clear section headers.
     
     Args:
         sources: List of (section_name, file_path, content) tuples
+        repo_root: Path to repository root for relative path calculation
+        personal_overlay: Path to personal overlay (to skip source lines for personal files)
     
     Returns:
         Merged markdown string
@@ -298,7 +301,30 @@ def merge_markdown(sources: List[Tuple[str, Path, str]]) -> str:
     for section_name, file_path, content in sources:
         # Add section header
         sections.append(f"## {section_name}")
-        sections.append(f"*Source: {file_path}*")
+        
+        # Skip source line for personal overlay files (they would break for other users)
+        # Only show source for files within repo_root or org_root
+        if personal_overlay and file_path.is_relative_to(personal_overlay):
+            # Don't show source for personal overlay files
+            pass
+        else:
+            # Convert to relative path from repo_root
+            try:
+                if file_path.is_relative_to(repo_root):
+                    rel_path = file_path.relative_to(repo_root)
+                else:
+                    # For files outside repo (like org_root), calculate relative path
+                    rel_path = os.path.relpath(str(file_path), str(repo_root))
+                sections.append(f"*Source: {rel_path}*")
+            except ValueError:
+                # Path is not relative to repo_root, calculate using os.path.relpath
+                try:
+                    rel_path = os.path.relpath(str(file_path), str(repo_root))
+                    sections.append(f"*Source: {rel_path}*")
+                except ValueError:
+                    # Can't calculate relative path, skip source line
+                    pass
+        
         sections.append("")
         sections.append(content)
         sections.append("")
@@ -358,19 +384,44 @@ def _apply_filters(items: List[str], include: List[str], exclude: List[str]) -> 
     return result
 
 
-def _build_traceability_header(metadata: Dict[str, Any], include_hash: bool) -> str:
+def _build_traceability_header(metadata: Dict[str, Any], repo_root: Path, include_hash: bool) -> str:
     """Build the traceability header for compiled output."""
+    repo_root_path = Path(metadata['repo_root'])
+    org_root_path = Path(metadata['org_root'])
+    
+    # Convert paths to relative
+    repo_root_rel = "."
+    
+    # Calculate org_root relative path
+    try:
+        # If org_root is a parent of repo_root, calculate relative path
+        if repo_root_path.is_relative_to(org_root_path):
+            # Count how many levels up we need to go
+            rel_parts = repo_root_path.relative_to(org_root_path).parts
+            org_root_rel = "/".join([".."] * len(rel_parts))
+        else:
+            # Try the other direction
+            org_root_rel = str(org_root_path.relative_to(repo_root_path))
+    except ValueError:
+        # Paths don't share a common structure, use os.path.relpath
+        org_root_rel = os.path.relpath(str(org_root_path), str(repo_root_path))
+    
     lines = [
         "# Compiled Agent Instructions",
         "",
         "## Traceability",
         "",
-        f"- **Repo Root**: `{metadata['repo_root']}`",
-        f"- **Org Root**: `{metadata['org_root']}`",
+        f"- **Repo Root**: `{repo_root_rel}`",
+        f"- **Org Root**: `{org_root_rel}`",
     ]
     
     if metadata.get("entry_point"):
-        lines.append(f"- **Entry Point**: `{metadata['entry_point']}`")
+        entry_point_path = Path(metadata['entry_point'])
+        try:
+            entry_point_rel = str(entry_point_path.relative_to(repo_root_path))
+        except ValueError:
+            entry_point_rel = os.path.relpath(str(entry_point_path), str(repo_root_path))
+        lines.append(f"- **Entry Point**: `{entry_point_rel}`")
     
     if metadata.get("constitution_version"):
         lines.append(f"- **Constitution Version**: {metadata['constitution_version']}")
@@ -398,10 +449,14 @@ def _build_traceability_header(metadata: Dict[str, Any], include_hash: bool) -> 
         lines.append(f"- **Target Agents**: {', '.join(metadata['target_agents'])}")
     
     if metadata.get("project_rules"):
-        lines.append(f"- **Project Rules**: `{metadata['project_rules']}`")
+        project_rules_path = Path(metadata['project_rules'])
+        try:
+            project_rules_rel = str(project_rules_path.relative_to(repo_root_path))
+        except ValueError:
+            project_rules_rel = os.path.relpath(str(project_rules_path), str(repo_root_path))
+        lines.append(f"- **Project Rules**: `{project_rules_rel}`")
     
-    if metadata.get("personal_overlay"):
-        lines.append(f"- **Personal Overlay**: `{metadata['personal_overlay']}`")
+    # Personal overlay removed - would break for other users
     
     if include_hash and metadata.get("content_hash"):
         lines.append(f"- **Content Hash**: `{metadata['content_hash']}`")

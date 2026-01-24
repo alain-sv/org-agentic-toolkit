@@ -89,10 +89,10 @@ skills:
 personas: []
 """)
         
-        # Setup personal overlay
-        personal = tmp_path / "personal"
-        (personal / ".agent" / "memory").mkdir(parents=True)
-        (personal / ".agent" / "memory" / "personal-context.md").write_text(
+        # Setup personal overlay (personal_overlay should be the .agent directory)
+        personal = tmp_path / "personal" / ".agent"
+        (personal / "memory").mkdir(parents=True)
+        (personal / "memory" / "personal-context.md").write_text(
             "# Personal Context"
         )
         
@@ -106,14 +106,20 @@ personas: []
 class TestMergeMarkdown:
     """Test markdown merging."""
     
-    def test_merge_markdown(self):
+    def test_merge_markdown(self, tmp_path):
         """Test merging multiple markdown sources."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        
+        file1 = repo_root / "file1.md"
+        file2 = repo_root / "file2.md"
+        
         sources = [
-            ("Section 1", Path("file1.md"), "Content 1"),
-            ("Section 2", Path("file2.md"), "Content 2"),
+            ("Section 1", file1, "Content 1"),
+            ("Section 2", file2, "Content 2"),
         ]
         
-        result = merge_markdown(sources)
+        result = merge_markdown(sources, repo_root, None)
         
         assert "Section 1" in result
         assert "Section 2" in result
