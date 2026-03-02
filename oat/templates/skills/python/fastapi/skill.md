@@ -1,3 +1,8 @@
+---
+name: FastAPI Framework Skills
+description: Apply FastAPI patterns for routes, async operations, and API documentation
+---
+
 # FastAPI Framework Skills
 
 ## FastAPI Patterns

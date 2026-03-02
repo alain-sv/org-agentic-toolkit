@@ -1,3 +1,8 @@
+---
+name: Git Skills
+description: Follow version control best practices for branching, commits, and pull requests
+---
+
 # Git Skills
 
 ## Version Control Best Practices

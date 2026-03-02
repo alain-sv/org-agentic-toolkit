@@ -1,3 +1,8 @@
+---
+name: Testing Skills
+description: Apply testing principles including coverage targets, test types, and best practices
+---
+
 # Testing Skills
 
 ## Testing Principles

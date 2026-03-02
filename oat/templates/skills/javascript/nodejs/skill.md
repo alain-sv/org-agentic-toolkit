@@ -1,3 +1,8 @@
+---
+name: Node.js Skills
+description: Apply Node.js patterns for modules, async operations, and server best practices
+---
+
 # Node.js Skills
 
 ## Node.js Patterns

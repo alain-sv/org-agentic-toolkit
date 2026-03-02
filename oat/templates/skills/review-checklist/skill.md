@@ -1,3 +1,8 @@
+---
+name: Code Review Checklist
+description: Use structured checklist for correctness, quality, security, and testing during code reviews
+---
+
 # Code Review Checklist
 
 ## Review Criteria

@@ -7,7 +7,7 @@ from oat.cli_helpers.output import error, generate_table_of_contents
 
 class TestGenerateTableOfContents:
     """Test table of contents generation."""
-    
+
     def test_generate_toc_basic(self):
         """Test basic TOC generation."""
         content = """## Header 1
@@ -21,13 +21,13 @@ More content
         assert "Header 1" in toc
         assert "Header 2" in toc
         assert "Header 3" in toc
-    
+
     def test_generate_toc_empty(self):
         """Test TOC generation with no headers."""
         content = "Just some text without headers"
         toc = generate_table_of_contents(content)
         assert toc == ""
-    
+
     def test_generate_toc_with_links(self):
         """Test TOC generation with markdown links in headers."""
         content = """## Header with [link](url)
@@ -39,7 +39,7 @@ Content
 
 class TestError:
     """Test error output function."""
-    
+
     def test_error_function_exists(self):
         """Test that error function exists and is callable."""
         assert callable(error)

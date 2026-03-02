@@ -1,3 +1,8 @@
+---
+name: Django Framework Skills
+description: Follow Django patterns for models, views, URLs, and testing
+---
+
 # Django Framework Skills
 
 ## Django Patterns
