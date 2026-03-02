@@ -18,6 +18,11 @@ from oat.discovery import (
 )
 
 
+def _is_skill_folder(item) -> bool:
+    """Check if a directory is a skill folder (contains skill.md)."""
+    return item.is_dir() and item.joinpath("skill.md").is_file()
+
+
 def get_available_options() -> dict:
     """Scan template folders for available skills, personas, and teams."""
     options: dict = {"skills": [], "personas": [], "teams": []}
@@ -31,27 +36,22 @@ def get_available_options() -> dict:
     try:
         templates_root = importlib.resources.files("oat.templates")
 
-        # Scan Universal Skills (files in skills/ root, excluding those starting with _)
+        # Scan Universal Skills (skill folders in skills/ root)
         skills_dir = templates_root.joinpath("skills")
         if skills_dir.is_dir():
             for item in skills_dir.iterdir():
-                if (
-                    item.is_file()
-                    and item.name.endswith(".md")
-                    and not item.name.startswith("_")
-                ):
-                    options["skills"].append(_get_stem(item.name))
+                if not item.is_dir() or item.name.startswith("_"):
+                    continue
 
-                # Scan Language Skills (subdirectories)
-                if item.is_dir():
+                # Check if this is a universal skill folder (has skill.md)
+                if _is_skill_folder(item):
+                    options["skills"].append(item.name)
+                else:
+                    # This is a language directory — scan for skill subfolders
                     lang_skills = []
-                    for skill_file in item.iterdir():
-                        if (
-                            skill_file.is_file()
-                            and skill_file.name.endswith(".md")
-                            and not skill_file.name.startswith("_")
-                        ):
-                            lang_skills.append(_get_stem(skill_file.name))
+                    for skill_item in item.iterdir():
+                        if _is_skill_folder(skill_item):
+                            lang_skills.append(skill_item.name)
                     if lang_skills:
                         options[item.name] = lang_skills
 
@@ -439,21 +439,27 @@ def sync_from_template(repo_root: Path, config: dict, ctx):
 
         templates_skills_dir = templates_root.joinpath("skills")
         if templates_skills_dir.is_dir():
-            # Get all existing files in .agent/skills
+            # Get all existing skill folders in .agent/skills
             existing_skills = set()
             if skills_dir.exists():
-                for f in skills_dir.glob("*.md"):
-                    existing_skills.add(f.stem)
+                for d in skills_dir.iterdir():
+                    if d.is_dir() and (d / "skill.md").exists():
+                        existing_skills.add(d.name)
 
             # Copy missing universal skills
             for skill_name in universal_skills:
-                template_file = templates_skills_dir.joinpath(f"{skill_name}.md")
-                if template_file.is_file():
-                    target_file = skills_dir / f"{skill_name}.md"
+                template_dir = templates_skills_dir.joinpath(skill_name)
+                template_file = (
+                    template_dir.joinpath("skill.md") if template_dir.is_dir() else None
+                )
+                if template_file and template_file.is_file():
+                    target_dir = skills_dir / skill_name
+                    target_file = target_dir / "skill.md"
                     if not target_file.exists():
+                        target_dir.mkdir(parents=True, exist_ok=True)
                         content = template_file.read_text(encoding="utf-8")
                         target_file.write_text(content, encoding="utf-8")
-                        added_files.append(f".agent/skills/{skill_name}.md")
+                        added_files.append(f".agent/skills/{skill_name}/skill.md")
                 elif skill_name not in existing_skills:
                     # Skill is in config but template doesn't exist
                     if not ctx.obj["quiet"]:
@@ -465,7 +471,7 @@ def sync_from_template(repo_root: Path, config: dict, ctx):
             # Suggest removal of skills not in config
             for existing_skill in existing_skills:
                 if existing_skill not in universal_skills:
-                    removed_suggestions.append(f".agent/skills/{existing_skill}.md")
+                    removed_suggestions.append(f".agent/skills/{existing_skill}/")
 
         # Sync Language Skills
         language_skills = skills_config.get("languages", {})
@@ -475,21 +481,31 @@ def sync_from_template(repo_root: Path, config: dict, ctx):
 
             templates_lang_dir = templates_skills_dir.joinpath(lang)
             if templates_lang_dir.is_dir():
-                # Get existing files
+                # Get existing skill folders
                 existing_lang_skills = set()
                 if lang_skills_dir.exists():
-                    for f in lang_skills_dir.glob("*.md"):
-                        existing_lang_skills.add(f.stem)
+                    for d in lang_skills_dir.iterdir():
+                        if d.is_dir() and (d / "skill.md").exists():
+                            existing_lang_skills.add(d.name)
 
                 # Copy missing language skills
                 for skill_name in lang_skill_list:
-                    template_file = templates_lang_dir.joinpath(f"{skill_name}.md")
-                    if template_file.is_file():
-                        target_file = lang_skills_dir / f"{skill_name}.md"
+                    template_dir = templates_lang_dir.joinpath(skill_name)
+                    template_file = (
+                        template_dir.joinpath("skill.md")
+                        if template_dir.is_dir()
+                        else None
+                    )
+                    if template_file and template_file.is_file():
+                        target_dir = lang_skills_dir / skill_name
+                        target_file = target_dir / "skill.md"
                         if not target_file.exists():
+                            target_dir.mkdir(parents=True, exist_ok=True)
                             content = template_file.read_text(encoding="utf-8")
                             target_file.write_text(content, encoding="utf-8")
-                            added_files.append(f".agent/skills/{lang}/{skill_name}.md")
+                            added_files.append(
+                                f".agent/skills/{lang}/{skill_name}/skill.md"
+                            )
                     elif skill_name not in existing_lang_skills:
                         if not ctx.obj["quiet"]:
                             click.echo(
@@ -501,7 +517,7 @@ def sync_from_template(repo_root: Path, config: dict, ctx):
                 for existing_skill in existing_lang_skills:
                     if existing_skill not in lang_skill_list:
                         removed_suggestions.append(
-                            f".agent/skills/{lang}/{existing_skill}.md"
+                            f".agent/skills/{lang}/{existing_skill}/"
                         )
 
         # Sync Personas

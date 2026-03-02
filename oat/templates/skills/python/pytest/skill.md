@@ -1,3 +1,8 @@
+---
+name: Pytest Testing Skills
+description: Use pytest fixtures, markers, and assertion patterns effectively
+---
+
 # Pytest Testing Skills
 
 ## Pytest Best Practices

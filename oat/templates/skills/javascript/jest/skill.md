@@ -1,3 +1,8 @@
+---
+name: Jest Testing Skills
+description: Use Jest patterns for test structure, mocking, and assertions
+---
+
 # Jest Testing Skills
 
 ## Jest Best Practices

@@ -1,3 +1,8 @@
+---
+name: Database Skills
+description: Apply database best practices for migrations, queries, and data safety
+---
+
 # Database Skills
 
 ## Database Best Practices

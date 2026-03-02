@@ -1,14 +1,18 @@
+---
+name: UV Package Manager
+description: Use uv exclusively for Python dependency management, scripts, and virtual environments
+---
 
 # Package Management with `uv`
 
 These rules define strict guidelines for managing Python dependencies in this project using the `uv` dependency manager.
 
-**✅ Use `uv` exclusively**
+**Use `uv` exclusively**
 
 - All Python dependencies **must be installed, synchronized, and locked** using `uv`.
 - Never use `pip`, `pip-tools`, or `poetry` directly for dependency management.
 
-**🔁 Managing Dependencies**
+**Managing Dependencies**
 
 Always use these commands:
 
@@ -23,7 +27,7 @@ uv remove <package>
 uv sync
 ```
 
-**🔁 Scripts**
+**Scripts**
 
 ```bash
 # Run script with proper dependencies
@@ -61,4 +65,3 @@ uv remove package-name --script script.py
 # Reinstall all script dependencies from lock file
 uv sync --script script.py
 ```
-    

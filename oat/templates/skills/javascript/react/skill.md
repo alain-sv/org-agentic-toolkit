@@ -1,3 +1,8 @@
+---
+name: React Framework Skills
+description: Follow React patterns for components, state management, and performance optimization
+---
+
 # React Framework Skills
 
 ## React Patterns

@@ -17,7 +17,7 @@ def find_file_in_locations(
     Find a file in the correct precedence order: personal -> org -> project.
 
     Args:
-        file_path: Relative path from .agent (e.g., "skills/db.md")
+        file_path: Relative path from .agent (e.g., "skills/db/skill.md")
         personal_overlay: Path to personal overlay (already the .agent directory, e.g., ~/.agent)
         org_root: Path to organization root
         repo_root: Path to repository root
@@ -130,7 +130,7 @@ def generate_compile_summary(
 
     # Teams (from inherits.yaml or personal overlay)
     teams_to_check = teams_list.copy()
-    
+
     # Check personal overlay for team context if not specified in inherits.yaml
     if not teams_to_check and not options.no_personal and personal_overlay:
         me_path = personal_overlay / "personas" / "me.md"
@@ -146,7 +146,7 @@ def generate_compile_summary(
                             break
             except Exception:
                 pass  # Ignore errors reading me.md in summary
-    
+
     # Teams
     if teams_to_check:
         lines.append("\nTeams:")
@@ -171,7 +171,7 @@ def generate_compile_summary(
     if universal_skills:
         lines.append("\nUniversal Skills:")
         for skill_name in universal_skills:
-            file_path = f"skills/{skill_name}.md"
+            file_path = f"skills/{skill_name}/skill.md"
             found_path, locations = find_file_in_locations(
                 file_path, personal_overlay, org_root, repo_root
             )
@@ -194,7 +194,7 @@ def generate_compile_summary(
         lines.append("\nLanguage Skills:")
         for lang, lang_skill_list in language_skills.items():
             for skill_name in lang_skill_list:
-                file_path = f"skills/{lang}/{skill_name}.md"
+                file_path = f"skills/{lang}/{skill_name}/skill.md"
                 found_path, locations = find_file_in_locations(
                     file_path, personal_overlay, org_root, repo_root
                 )

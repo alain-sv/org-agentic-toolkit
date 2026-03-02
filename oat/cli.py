@@ -253,7 +253,7 @@ def compile(
                     ctx,
                 )
                 sys.exit(1)
-            
+
             # Offer to create missing files
             if not ctx.obj["quiet"] and sys.stdin.isatty():
                 click.echo(f"\nFound {len(missing_files)} missing file(s).")
@@ -266,12 +266,14 @@ def compile(
                         teams_list,
                         skills_list,
                         personas_list,
-                        ctx
+                        ctx,
                     )
-                    
+
                     if created_files:
                         click.echo(f"\n✓ Created {len(created_files)} file(s).")
-                        click.echo("\nPlease edit the created file(s) and run `oat compile` again:")
+                        click.echo(
+                            "\nPlease edit the created file(s) and run `oat compile` again:"
+                        )
                         for file_path in created_files:
                             click.echo(f"  - {file_path}")
                         sys.exit(0)
@@ -458,7 +460,7 @@ def compile(
                     )
 
                     created_targets = []
-                    
+
                     for agent_name in target_agents:
                         if agent_name in template_targets:
                             target_file_path = repo_root / template_targets[agent_name]
@@ -672,8 +674,9 @@ def doctor(ctx, output_json):
         # Find available but not included items
         available_skills = set()
         if (org_root / ".agent" / "skills").exists():
-            for skill_file in (org_root / ".agent" / "skills").glob("*.md"):
-                available_skills.add(skill_file.stem)
+            for skill_dir in (org_root / ".agent" / "skills").iterdir():
+                if skill_dir.is_dir() and (skill_dir / "skill.md").exists():
+                    available_skills.add(skill_dir.name)
 
         available_personas = set()
         if (org_root / ".agent" / "personas").exists():
@@ -874,8 +877,6 @@ def init_project(ctx, org_root, force, suggest):
         sys.exit(1)
 
 
-
-
 @init.command("org")
 @click.option("--name", default="My Org", help="Organization name")
 @click.option("--force", is_flag=True, help="Overwrite existing files")
@@ -1067,8 +1068,6 @@ def init_personal(ctx, path, force):
 def setup(ctx):
     """Interactive setup for project configuration."""
     run_setup(ctx)
-
-
 
 
 @cli.group()
